@@ -1,0 +1,3 @@
+Tasks 8.03.2026:
+- Sprawdzić czy już nikt nie robił tego
+- Porównać opptymalizację z Adamem I BFSG
