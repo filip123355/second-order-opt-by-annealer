@@ -1,0 +1,9 @@
+torch>=2.1.0
+numpy>=1.24
+matplotlib>=3.7
+scikit-learn>=1.2
+dimod>=0.12
+dwave-system>=1.10
+dwave-samplers>=0.3
+tqdm>=4.65
+

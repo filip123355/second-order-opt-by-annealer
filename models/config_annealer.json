@@ -1,0 +1,13 @@
+{
+  "input_dim": 4,
+  "hidden_dim": [
+    16,
+    8
+  ],
+  "output_dim": 3,
+  "sampler": "simulated",
+  "subset_size": 24,
+  "step_size": 0.05,
+  "num_reads": 200,
+  "epochs": 30
+}
