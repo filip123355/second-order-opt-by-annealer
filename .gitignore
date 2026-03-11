@@ -1,3 +1,50 @@
 /data
 /venv
+/mlruns
 TODO.txt
+.env
+mlflow.db
+
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.env/
+.env*/
+.venv/
+
+# Pip / installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing / coverage
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Wheel / packaging metadata
+*.whl
+MANIFEST

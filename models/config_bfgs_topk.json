@@ -1,1 +1,0 @@
-{"input_dim": 4, "hidden_dim": [16, 8], "output_dim": 3, "mode": "topk", "top_k": 24, "learning_rate": 1.0, "max_iter": 20, "history_size": 10, "epochs": 30}
