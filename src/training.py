@@ -83,11 +83,13 @@ def train(
                     accepted_steps += int(step_info["accepted"])
 
                 elif isinstance(optimizer, torch.optim.Optimizer):
-                    optimizer.zero_grad(set_to_none=True)
-                    logits = model(features)
-                    loss = loss_fn(logits, targets)
-                    loss.backward()
-                    optimizer.step()
+                    def closure():
+                        optimizer.zero_grad(set_to_none=True)
+                        logits = model(features)
+                        loss = loss_fn(logits, targets)
+                        loss.backward()
+                        return loss
+                    optimizer.step(closure)
                 else:
                     raise ValueError(f"Unsupported optimizer type: {type(optimizer)}")
 
