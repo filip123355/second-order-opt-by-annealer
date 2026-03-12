@@ -23,6 +23,8 @@ def train(
     tracking_uri: str | None = None,
     experiment_name: str = "quadratic-annealer-iris",
     log_batch_metrics: bool = True,
+    run_name: str | None = None,
+    verbose: bool = True, 
 ):
     device = torch.device(c_device)
     model.to(device)
@@ -43,7 +45,7 @@ def train(
         mlflow.set_tracking_uri(default_tracking_uri)
         mlflow.set_experiment(experiment_name)
 
-    with mlflow.start_run(run_name=f"{type(model).__name__}_{type(optimizer).__name__}"):
+    with mlflow.start_run(run_name=run_name):
         mlflow.log_params(
             {
                 "optimizer": type(optimizer).__name__,
@@ -123,7 +125,7 @@ def train(
                 step=epoch,
             )
 
-            if epoch % 5 == 0 or epoch == epochs - 1:
+            if verbose and (epoch % 5 == 0 or epoch == epochs - 1):
                 print(
                     f"Epoch {epoch:03d} | "
                     f"train_loss={train_loss:.4f} | "

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class QuadraticMLP(nn.Module):
 
 
@@ -31,28 +30,28 @@ class QuadraticMLP(nn.Module):
                 x: torch.Tensor,
     ) -> torch.Tensor:
         return self.network(x)
-    
 
-class LogisticRegression(nn.Module):
+class BaseLinearModel(nn.Module):
+    """Generic linear model for regression or classification."""
 
-
-    """A simple logistic regression model."""
-  
-    def __init__(self, 
-                 input_dim: int, 
-                 output_dim: int,
-                 ):
+    def __init__(self, input_dim: int, output_dim: int):
         super().__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
         self.linear = nn.Linear(input_dim, output_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return (self.linear(x))
-    
-class SVM(nn.Module):
+        return self.linear(x)
 
 
-    """A simple class implementing Support Vector Machine as a Pytotch module."""
+class Logistic(BaseLinearModel):
+    """Binary or multiclass logistic regression."""
+    pass 
 
-    pass
+
+class SVM(BaseLinearModel):
+    """Linear Support Vector Machine (outputs raw scores)."""
+    pass 
+
+
+class ElasticNet(BaseLinearModel):
+    """Linear model with Elastic Net regularization."""
+    pass  
