@@ -9,6 +9,7 @@ from typing import Optional, Any
 
 from .quadratic_annealing_optimizer import QuadraticAnnealingOptimizer
 from .models import QuadraticMLP
+from .newton_optimizer import NewtonOptimizer
 from .utils import evaluate
 
 
@@ -21,7 +22,7 @@ def train(
     optimizer: Any,
     epochs: int,
     tracking_uri: str | None = None,
-    experiment_name: str = "quadratic-annealer-iris",
+    experiment_name: str = "second-order-opt-by-annealer",
     log_batch_metrics: bool = True,
     run_name: str | None = None,
     verbose: bool = True, 
@@ -56,9 +57,9 @@ def train(
         )
 
         model_config = {
-            "input_dim": model.input_dim,
-            "hidden_dim": model.hidden_dim,
-            "output_dim": model.output_dim,
+            name: module 
+            for name, module 
+            in model.named_modules()
         }
             
         mlflow.log_dict(model_config, "configs/model.json")
@@ -84,16 +85,22 @@ def train(
                     batch_energies.append(step_info["quadratic_energy"])
                     accepted_steps += int(step_info["accepted"])
 
-                elif isinstance(optimizer, torch.optim.Optimizer):
-                    def closure():
-                        optimizer.zero_grad(set_to_none=True)
-                        logits = model(features)
-                        loss = loss_fn(logits, targets)
-                        loss.backward()
-                        return loss
-                    optimizer.step(closure)
                 else:
-                    raise ValueError(f"Unsupported optimizer type: {type(optimizer)}")
+                    if isinstance(optimizer, NewtonOptimizer):
+                        def closure():
+                            optimizer.zero_grad(set_to_none=True)
+                            logits = model(features)
+                            loss = loss_fn(logits, targets)
+                            return loss
+                        optimizer.step(closure)
+                    else:
+                        def closure():
+                            optimizer.zero_grad(set_to_none=True)
+                            logits = model(features)
+                            loss = loss_fn(logits, targets)
+                            loss.backward()
+                            return loss
+                        optimizer.step(closure)
 
                 if log_batch_metrics and isinstance(optimizer, QuadraticAnnealingOptimizer):
                     log = {"batch_loss": float(step_info["loss"])}
@@ -136,4 +143,4 @@ def train(
 
         training_time = perf_counter() - start_time
         mlflow.log_metric("training_time_sec", float(training_time))
-        mlflow.pytorch.log_model(model, artifact_path="model")
+        mlflow.pytorch.log_model(model, name="model")

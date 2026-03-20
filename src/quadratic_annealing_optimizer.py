@@ -60,6 +60,7 @@ class QuadraticAnnealingOptimizer:
         """
         Function to compute the quadratic approximation of the loss landscape in the neighborhood of the current parameters.
         """
+
         params = [param for param in self.model.parameters() if param.requires_grad]
         grads = torch.autograd.grad(loss, params, create_graph=True)
         grad_vec = parameters_to_vector(grads)
@@ -71,7 +72,6 @@ class QuadraticAnnealingOptimizer:
             device=self.device,
         )
         
-        # TODO: Hessian computation has to be optimized for GPU in future. Now it does not matter for small models
         for row_index, param_index in enumerate(selected_indices):
             second_grads = torch.autograd.grad(
                 grad_vec[param_index],
@@ -82,6 +82,7 @@ class QuadraticAnnealingOptimizer:
             hessian_block[row_index] = second_vec[selected_indices]
 
         hessian_block = 0.5 * (hessian_block + hessian_block.T) # Hermitization
+
         return (grad_vec.detach(), 
                 selected_indices.detach(), 
                 grad_block.detach(), 
@@ -92,7 +93,7 @@ class QuadraticAnnealingOptimizer:
         self,
         selected_indices: torch.Tensor,
         grad_block: torch.Tensor,
-        hessian_block: torch.Tensor,
+        hessian_block: torch.Tensor
     ) -> BinaryQuadraticModel:
         """ 
         Function to build a binary quadratic model from the selected gradient and Hessian blocks. 
@@ -176,8 +177,6 @@ class QuadraticAnnealingOptimizer:
             "selected_variables": int(selected_indices.numel()),
         }
     
-    def zero_grad(self):
-        pass
 
 if __name__ == "__main__":
     QuadraticAnnealingOptimizer(

@@ -9,6 +9,7 @@ from dwave.samplers import SimulatedAnnealingSampler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset
+from src.gpu_simulated_annealing.gpu_simulated_annealing import GPUSimulatedAnnealingSampler
 
 def build_sampler(mode: str = "simulated"):
     normalized_mode = mode.lower() 
@@ -28,8 +29,8 @@ def build_sampler(mode: str = "simulated"):
     if normalized_mode == "simulated":
         return SimulatedAnnealingSampler()
     
-    # if normalized_mode == "gpu_simpulated":
-    #     return None
+    if normalized_mode == "gpu_simulated":
+        return GPUSimulatedAnnealingSampler()
 
     raise ValueError("mode must be one of: simulated, exact, dwave")
 

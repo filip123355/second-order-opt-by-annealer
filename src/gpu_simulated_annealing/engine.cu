@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 // Simple GPU simulated annealer for dense Ising / BQM problems.
 // - Spins are represented as {-1, +1}
@@ -14,13 +15,11 @@ __device__ inline float replica_energy(const int8_t* spins, const float* J, cons
     float E = 0.0f;
     for (int i = 0; i < N; ++i) {
         float local = h[i] * spins[i];
-        // dot product J[i,:] * spins
         float ssum = 0.0f;
         int idx = i * N;
         for (int j = 0; j < N; ++j) {
             ssum += J[idx + j] * spins[j];
         }
-        // each pair counted twice in full sum; we include full interaction then divide later
         E += 0.5f * spins[i] * ssum + local;
     }
     return E;
@@ -42,7 +41,7 @@ __global__ void sa_kernel(
     int rid = blockIdx.x * blockDim.x + threadIdx.x;
     if (rid >= R) return;
 
-    // per-replica RNG
+    // replica's rng
     curandState_t state;
     curand_init(seed ^ (unsigned long long)rid, 0, 0, &state);
 
@@ -94,52 +93,103 @@ __global__ void sa_kernel(
     out_best_energy[rid] = bestE;
 }
 
-// Host-side helper: simple example that sets up a random small Ising and runs the kernel.
+static int read_file_bytes(const char* path, void* dst, size_t bytes) {
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "Failed to open input file: %s\n", path);
+        return 0;
+    }
+    size_t got = fread(dst, 1, bytes, f);
+    fclose(f);
+    if (got != bytes) {
+        fprintf(stderr, "Failed to read %zu bytes from %s (read %zu)\n", bytes, path, got);
+        return 0;
+    }
+    return 1;
+}
+
+static int write_file_bytes(const char* path, const void* src, size_t bytes) {
+    FILE* f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "Failed to open output file: %s\n", path);
+        return 0;
+    }
+    size_t wrote = fwrite(src, 1, bytes, f);
+    fclose(f);
+    if (wrote != bytes) {
+        fprintf(stderr, "Failed to write %zu bytes to %s (wrote %zu)\n", bytes, path, wrote);
+        return 0;
+    }
+    return 1;
+}
+
+static void make_path_in_dir(const char* src_file, const char* out_name, char* out_path, size_t out_path_size) {
+    const char* slash = strrchr(src_file, '/');
+    if (!slash) {
+        snprintf(out_path, out_path_size, "%s", out_name);
+        return;
+    }
+    size_t dir_len = (size_t)(slash - src_file + 1);
+    if (dir_len + strlen(out_name) + 1 > out_path_size) {
+        fprintf(stderr, "Output path too long\n");
+        exit(1);
+    }
+    memcpy(out_path, src_file, dir_len);
+    memcpy(out_path + dir_len, out_name, strlen(out_name) + 1);
+}
+
 int main(int argc, char** argv) {
-    // small demo parameters
-    int N = 64;               // number of spins
-    int R = 256;              // replicas
-    int steps = 200;          // sweeps per replica
-    float beta_start = 0.1f;
-    float beta_end = 5.0f;
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s N j.bin h.bin num_reads [steps beta_start beta_end]\n", argv[0]);
+        return 1;
+    }
 
-    if (argc >= 2) N = atoi(argv[1]);
-    if (argc >= 3) R = atoi(argv[2]);
+    int N = atoi(argv[1]);
+    const char* j_path = argv[2];
+    const char* h_path = argv[3];
+    int R = atoi(argv[4]);
 
-    size_t Jbytes = sizeof(float) * N * N;
-    size_t hbytes = sizeof(float) * N;
-    size_t spins_bytes = sizeof(int8_t) * N * R;
-    size_t energy_bytes = sizeof(float) * R;
+    int steps = (argc >= 6) ? atoi(argv[5]) : 200;
+    float beta_start = (argc >= 7) ? (float)atof(argv[6]) : 0.1f;
+    float beta_end = (argc >= 8) ? (float)atof(argv[7]) : 5.0f;
 
-    // allocate host
+    if (N <= 0 || R <= 0 || steps <= 0) {
+        fprintf(stderr, "N, num_reads and steps must be positive\n");
+        return 1;
+    }
+
+    size_t Jbytes = sizeof(float) * (size_t)N * (size_t)N;
+    size_t hbytes = sizeof(float) * (size_t)N;
+    size_t spins_bytes = sizeof(int8_t) * (size_t)N * (size_t)R;
+    size_t energy_bytes = sizeof(float) * (size_t)R;
+
     float* h_J = (float*)malloc(Jbytes);
     float* h_h = (float*)malloc(hbytes);
     int8_t* h_spins = (int8_t*)malloc(spins_bytes);
     float* h_bestE = (float*)malloc(energy_bytes);
     int8_t* h_bestSpins = (int8_t*)malloc(spins_bytes);
 
-    // random init (small couplings)
-    srand(123);
-    for (int i = 0; i < N; ++i) {
-        h_h[i] = 0.01f * ((float)rand() / RAND_MAX - 0.5f);
-        for (int j = 0; j < N; ++j) {
-            if (i == j) h_J[i * N + j] = 0.0f;
-            else {
-                float v = 0.02f * ((float)rand() / RAND_MAX - 0.5f);
-                h_J[i * N + j] = v;
-            }
-        }
+    if (!h_J || !h_h || !h_spins || !h_bestE || !h_bestSpins) {
+        fprintf(stderr, "Host allocation failed\n");
+        return 1;
     }
 
-    // initial spins per replica
+    if (!read_file_bytes(j_path, h_J, Jbytes) || !read_file_bytes(h_path, h_h, hbytes)) {
+        return 1;
+    }
+
+    srand(123);
     for (int r = 0; r < R; ++r) {
         for (int i = 0; i < N; ++i) {
             h_spins[r * N + i] = (rand() & 1) ? 1 : -1;
         }
     }
 
-    // device buffers
-    float* d_J; float* d_h; int8_t* d_spins; float* d_bestE; int8_t* d_bestSpins;
+    float* d_J;
+    float* d_h;
+    int8_t* d_spins;
+    float* d_bestE;
+    int8_t* d_bestSpins;
     cudaMalloc((void**)&d_J, Jbytes);
     cudaMalloc((void**)&d_h, hbytes);
     cudaMalloc((void**)&d_spins, spins_bytes);
@@ -152,28 +202,44 @@ int main(int argc, char** argv) {
 
     int threads = 128;
     int blocks = (R + threads - 1) / threads;
-
     unsigned long long seed = 123456789ULL;
 
-    sa_kernel<<<blocks, threads>>>(d_spins, d_J, d_h, beta_start, beta_end, N, steps, R, seed, d_bestE, d_bestSpins);
+    sa_kernel<<<blocks, threads>>>(
+        d_spins,
+        d_J,
+        d_h,
+        beta_start,
+        beta_end,
+        N,
+        steps,
+        R,
+        seed,
+        d_bestE,
+        d_bestSpins
+    );
     cudaDeviceSynchronize();
 
     cudaMemcpy(h_bestE, d_bestE, energy_bytes, cudaMemcpyDeviceToHost);
     cudaMemcpy(h_bestSpins, d_bestSpins, spins_bytes, cudaMemcpyDeviceToHost);
 
-    // find global best across replicas
-    float globalE = 1e30f;
-    int best_r = -1;
-    for (int r = 0; r < R; ++r) {
-        if (h_bestE[r] < globalE) {
-            globalE = h_bestE[r];
-            best_r = r;
-        }
-    }
-    printf("Global best energy: %f (replica %d)\n", globalE, best_r);
+    char best_e_path[4096];
+    char best_sample_path[4096];
+    make_path_in_dir(j_path, "bestE.bin", best_e_path, sizeof(best_e_path));
+    make_path_in_dir(j_path, "bestSample.bin", best_sample_path, sizeof(best_sample_path));
 
-    // cleanup
-    cudaFree(d_J); cudaFree(d_h); cudaFree(d_spins); cudaFree(d_bestE); cudaFree(d_bestSpins);
-    free(h_J); free(h_h); free(h_spins); free(h_bestE); free(h_bestSpins);
+    if (!write_file_bytes(best_e_path, h_bestE, energy_bytes) || !write_file_bytes(best_sample_path, h_bestSpins, spins_bytes)) {
+        return 1;
+    }
+
+    cudaFree(d_J);
+    cudaFree(d_h);
+    cudaFree(d_spins);
+    cudaFree(d_bestE);
+    cudaFree(d_bestSpins);
+    free(h_J);
+    free(h_h);
+    free(h_spins);
+    free(h_bestE);
+    free(h_bestSpins);
     return 0;
 }
