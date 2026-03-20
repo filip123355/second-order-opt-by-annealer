@@ -1,11 +1,9 @@
 import torch.nn as nn
 import torch
-from torch.nn.utils import parameters_to_vector, vector_to_parameters
-from dimod import BinaryQuadraticModel, ExactSolver
 import dimod
 
-
-
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
+from dimod import BinaryQuadraticModel, ExactSolver
 class QuadraticAnnealingOptimizer:
 
     """An optimizer that uses a quadratic approximation of the loss landscape to construct a binary quadratic model, 
@@ -25,6 +23,7 @@ class QuadraticAnnealingOptimizer:
         step_size: float = 0.05,
         num_reads: int = 100,
         selection: str = "topk",
+        beta: float|None = None,
     ):
         self.sampler = sampler
         self.model = model
@@ -39,8 +38,10 @@ class QuadraticAnnealingOptimizer:
             "step_size": step_size,
             "num_reads": num_reads,
             "selection": selection,
+            "beta": beta,
         }
         self.param_groups = [self.defaults]
+        self.momentum: torch.Tensor | None = None
 
     def _selected_indices(self, grad_vec: torch.Tensor) -> torch.Tensor:
 
@@ -147,7 +148,11 @@ class QuadraticAnnealingOptimizer:
         logits = self.model(features)
         loss = loss_fn(logits, targets)
 
-        current_params = parameters_to_vector(self.model.parameters()).detach().clone()
+        params = [param for param in self.model.parameters() if param.requires_grad]
+        current_params = parameters_to_vector(params).detach().clone()
+        if self.momentum is None or self.momentum.shape != current_params.shape or self.momentum.device != current_params.device or self.momentum.dtype != current_params.dtype:
+            self.momentum = torch.zeros_like(current_params)
+
         _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
         bqm = self.build_bqm(selected_indices, grad_block, hessian_block)
         response = self.sample_bqm(bqm)
@@ -155,20 +160,27 @@ class QuadraticAnnealingOptimizer:
         delta = torch.zeros_like(current_params)
         for parameter_index in selected_indices.tolist():
             bit_value = response.first.sample[int(parameter_index)]
-            delta[int(parameter_index)] = self.step_size if bit_value else -self.step_size
+            delta_value = current_params.new_tensor(self.step_size if bit_value else -self.step_size)
+            beta = self.defaults.get("beta", None)
+            if beta is not None:
+                delta_value = delta_value + float(beta) * self.momentum[int(parameter_index)]
+            delta[int(parameter_index)] = delta_value
 
         with torch.no_grad():
             candidate_params = current_params + delta.to(current_params.device)
-            vector_to_parameters(candidate_params, self.model.parameters())
+            vector_to_parameters(candidate_params, params)
             candidate_loss = float(loss_fn(self.model(features), targets).item())
 
             if candidate_loss > float(loss.item()):
-                vector_to_parameters(current_params, self.model.parameters())
+                vector_to_parameters(current_params, params)
                 accepted = False
                 effective_loss = float(loss.item())
             else:
                 accepted = True
                 effective_loss = candidate_loss
+
+            if accepted and self.defaults.get("beta", None) is not None:
+                self.momentum[selected_indices] = delta[selected_indices]
 
         return {
             "loss": effective_loss,
