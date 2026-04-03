@@ -11,6 +11,7 @@ from .quadratic_annealing_optimizer import QuadraticAnnealingOptimizer
 from .models import QuadraticMLP
 from .newton_optimizer import NewtonOptimizer
 from .utils import evaluate
+from .losses import RidgeLoss
 
 
 def train(
@@ -90,14 +91,20 @@ def train(
                         def closure():
                             optimizer.zero_grad(set_to_none=True)
                             logits = model(features)
-                            loss = loss_fn(logits, targets)
+                            if isinstance(loss_fn, RidgeLoss):
+                                loss = loss_fn(logits, targets, model)
+                            else:
+                                loss = loss_fn(logits, targets)
                             return loss
                         optimizer.step(closure)
                     else:
                         def closure():
                             optimizer.zero_grad(set_to_none=True)
                             logits = model(features)
-                            loss = loss_fn(logits, targets)
+                            if isinstance(loss_fn, RidgeLoss):
+                                loss = loss_fn(logits, targets, model)
+                            else:
+                                loss = loss_fn(logits, targets)
                             loss.backward()
                             return loss
                         optimizer.step(closure)
@@ -112,14 +119,22 @@ def train(
                     )
                 global_step += 1
 
-            train_loss, train_accuracy = evaluate(model, train_loader, loss_fn, device)
-            test_loss, test_accuracy = evaluate(model, test_loader, loss_fn, device)
+            train_loss, train_metric = evaluate(model, train_loader, loss_fn, device)
+            test_loss, test_metric = evaluate(model, test_loader, loss_fn, device)
 
-            log = {
-                "train_loss": float(train_loss),
-                "train_accuracy": float(train_accuracy),
-                "test_loss": float(test_loss),
-                "test_accuracy": float(test_accuracy),
+            if isinstance(loss_fn, RidgeLoss):
+                log = {
+                    "train_loss": float(train_loss),
+                    "train_mse": float(train_metric),
+                    "test_loss": float(test_loss),
+                    "test_mse": float(test_metric),
+                }
+            else:
+                log = {
+                    "train_loss": float(train_loss),
+                    "train_accuracy": float(train_metric),
+                    "test_loss": float(test_loss),
+                    "test_accuracy": float(test_metric),
                 }
 
             if isinstance(optimizer, QuadraticAnnealingOptimizer):
@@ -136,9 +151,9 @@ def train(
                 print(
                     f"Epoch {epoch:03d} | "
                     f"train_loss={train_loss:.4f} | "
-                    f"train_acc={train_accuracy:.3f} | "
+                    f"train_{"mse" if isinstance(loss_fn, RidgeLoss) else "acc"}={train_metric:.3f} | "
                     f"test_loss={test_loss:.4f} | "
-                    f"test_acc={test_accuracy:.3f} | "
+                    f"test_{"mse" if isinstance(loss_fn, RidgeLoss) else "acc"}={test_metric:.3f} | "
                 )
 
         training_time = perf_counter() - start_time

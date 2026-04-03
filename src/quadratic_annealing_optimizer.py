@@ -4,8 +4,8 @@ import dimod
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
+from .losses import RidgeLoss
 class QuadraticAnnealingOptimizer:
-
     """An optimizer that uses a quadratic approximation of the loss landscape to construct a binary quadratic model, 
     which is then optimized using a quantum annealer or a classical sampler. The optimizer selects a subset of parameters 
     based on the magnitude of their gradients or randomly, and constructs a BQM that approximates the loss landscape in 
@@ -146,7 +146,7 @@ class QuadraticAnnealingOptimizer:
         """
         self.model.zero_grad(set_to_none=True)
         logits = self.model(features)
-        loss = loss_fn(logits, targets)
+        loss = loss_fn(logits, targets, self.model) if isinstance(loss_fn, RidgeLoss) else loss_fn(logits, targets)
 
         params = [param for param in self.model.parameters() if param.requires_grad]
         current_params = parameters_to_vector(params).detach().clone()
@@ -169,7 +169,10 @@ class QuadraticAnnealingOptimizer:
         with torch.no_grad():
             candidate_params = current_params + delta.to(current_params.device)
             vector_to_parameters(candidate_params, params)
-            candidate_loss = float(loss_fn(self.model(features), targets).item())
+
+            candidate_loss = (float(loss_fn(self.model(features), targets, self.model).item()) 
+                              if isinstance(loss_fn, RidgeLoss) 
+                              else float(loss_fn(self.model(features), targets).item()))
 
             if candidate_loss > float(loss.item()):
                 vector_to_parameters(current_params, params)

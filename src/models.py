@@ -57,3 +57,7 @@ class SVM(BaseLinearModel):
 class ElasticNet(BaseLinearModel):
     """Linear model with Elastic Net regularization."""
     pass  
+
+class Ridge(BaseLinearModel):
+    """Linear model with L2 regularization."""
+    pass
