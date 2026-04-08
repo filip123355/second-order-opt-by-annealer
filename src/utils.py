@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset
 from src.gpu_simulated_annealing.gpu_simulated_annealing import GPUSimulatedAnnealingSampler
-from .losses import RidgeLoss
+from .losses import RidgeLoss, SVMSquaredHingeLoss
 from typing import Optional
 
 def build_sampler(mode: str = "simulated",
@@ -70,7 +70,7 @@ def evaluate(
             features = features.to(device)
             targets = targets.to(device)
             logits = model(features)
-            if isinstance(loss_fn, RidgeLoss):
+            if isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss):
                 loss = loss_fn(logits, targets, model)
                 targets_for_mse = targets.view_as(logits) if targets.shape != logits.shape else targets
                 batch_mse = F.mse_loss(logits, targets_for_mse, reduction="mean")
@@ -78,7 +78,22 @@ def evaluate(
             else:
                 loss = loss_fn(logits, targets)
             total_loss += float(loss.item()) * targets.size(0)
-            total_correct += int((logits.argmax(dim=1) == targets).sum().item())
+
+            if isinstance(loss_fn, SVMSquaredHingeLoss):
+                # Binary SVM outputs a single margin per sample; decision boundary is at 0.
+                predicted = torch.where(logits.view(-1) >= 0, 1.0, -1.0)
+                target_eval = targets.view(-1).float()
+                total_correct += int((predicted == target_eval).sum().item())
+            elif logits.ndim == 2 and logits.shape[1] == 1:
+                # Generic binary case with labels in {0, 1}.
+                predicted = (logits.view(-1) >= 0).long()
+                target_eval = targets.view(-1).long()
+                total_correct += int((predicted == target_eval).sum().item())
+            else:
+                predicted = logits.argmax(dim=1)
+                target_eval = targets.view(-1)
+                total_correct += int((predicted == target_eval).sum().item())
+
             total_examples += int(targets.size(0))
 
     average_loss = total_loss / total_examples
@@ -126,6 +141,10 @@ def data_load_and_prep(dataset_name: str,
     X = torch.FloatTensor(X)
     if dataset_name.lower() == "diabetes":
         y = torch.FloatTensor(y)
+    elif dataset_name.lower() == "breast_cancer":
+        y *= 2
+        y -= 1
+        y = torch.FloatTensor(y)
     else:
         y = torch.LongTensor(y)
     
@@ -133,7 +152,7 @@ def data_load_and_prep(dataset_name: str,
         random_state = torch.seed()
     
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=None, shuffle=shuffle,
+        X, y, test_size=test_size, random_state=random_state, stratify=y, shuffle=shuffle,
     )
     
     if isinstance(batch_size, str) and batch_size.lower() == "full":

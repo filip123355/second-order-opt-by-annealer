@@ -11,7 +11,7 @@ from .quadratic_annealing_optimizer import QuadraticAnnealingOptimizer
 from .models import QuadraticMLP
 from .newton_optimizer import NewtonOptimizer
 from .utils import evaluate
-from .losses import RidgeLoss
+from .losses import RidgeLoss, SVMSquaredHingeLoss
 
 
 def train(
@@ -91,7 +91,7 @@ def train(
                         def closure():
                             optimizer.zero_grad(set_to_none=True)
                             logits = model(features)
-                            if isinstance(loss_fn, RidgeLoss):
+                            if isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss):
                                 loss = loss_fn(logits, targets, model)
                             else:
                                 loss = loss_fn(logits, targets)
@@ -101,7 +101,7 @@ def train(
                         def closure():
                             optimizer.zero_grad(set_to_none=True)
                             logits = model(features)
-                            if isinstance(loss_fn, RidgeLoss):
+                            if isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss):
                                 loss = loss_fn(logits, targets, model)
                             else:
                                 loss = loss_fn(logits, targets)

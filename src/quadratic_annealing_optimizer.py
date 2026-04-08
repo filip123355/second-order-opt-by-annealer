@@ -4,7 +4,7 @@ import dimod
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
-from .losses import RidgeLoss
+from .losses import RidgeLoss, SVMSquaredHingeLoss
 class QuadraticAnnealingOptimizer:
     """An optimizer that uses a quadratic approximation of the loss landscape to construct a binary quadratic model, 
     which is then optimized using a quantum annealer or a classical sampler. The optimizer selects a subset of parameters 
@@ -22,8 +22,8 @@ class QuadraticAnnealingOptimizer:
         subset_size: int = 12,
         step_size: float = 0.05,
         num_reads: int = 100,
-        selection: str = "topk",
-        beta: float|None = None,
+        selection: str | float = "topk",
+        beta: float | None = None,
     ):
         self.sampler = sampler
         self.model = model
@@ -49,11 +49,33 @@ class QuadraticAnnealingOptimizer:
         Function to select the subset of indices that will be included in an optimization step.
         """
         block_size = min(self.subset_size, grad_vec.numel())
-        if self.selection == "topk":
-            return torch.topk(grad_vec.abs(), k=block_size).indices
-        if self.selection == "random":
-            return torch.randperm(grad_vec.numel(), device=grad_vec.device)[:block_size]
-        raise ValueError("selection must be either 'topk' or 'random'")
+        if isinstance(self.selection, str):
+            if self.selection == "topk":
+                return torch.topk(grad_vec.abs(), k=block_size).indices
+            if self.selection == "random":
+                return torch.randperm(grad_vec.numel(), device=grad_vec.device)[:block_size]
+        elif isinstance(self.selection, float):
+            if 0 < self.selection < 1:
+                num_elements = grad_vec.numel()
+                top_k = int(min(self.selection * block_size, num_elements))
+
+                top_k_inds = torch.topk(grad_vec.abs(), k=top_k).indices
+
+                random_k = block_size - top_k
+                if random_k > 0:
+                    mask = torch.ones(num_elements, dtype=torch.bool, device=grad_vec.device)
+                    mask[top_k_inds] = False  
+                    
+                    remaining_inds = torch.where(mask)[0]
+                    
+                    perm = torch.randperm(remaining_inds.size(0), device=grad_vec.device)
+                    random_inds = remaining_inds[perm[:random_k]]
+                    
+                    return torch.cat([top_k_inds, random_inds])
+                
+                return top_k_inds
+            else:
+                raise ValueError("selection must be a float in (0, 1)")
 
     def quadratic_model(self, 
                         loss: torch.Tensor,
@@ -146,7 +168,9 @@ class QuadraticAnnealingOptimizer:
         """
         self.model.zero_grad(set_to_none=True)
         logits = self.model(features)
-        loss = loss_fn(logits, targets, self.model) if isinstance(loss_fn, RidgeLoss) else loss_fn(logits, targets)
+        loss = loss_fn(logits, targets, self.model) if (
+            isinstance(loss_fn, RidgeLoss) or isinstance(
+                loss_fn, SVMSquaredHingeLoss)) else loss_fn(logits, targets)
 
         params = [param for param in self.model.parameters() if param.requires_grad]
         current_params = parameters_to_vector(params).detach().clone()
@@ -171,7 +195,7 @@ class QuadraticAnnealingOptimizer:
             vector_to_parameters(candidate_params, params)
 
             candidate_loss = (float(loss_fn(self.model(features), targets, self.model).item()) 
-                              if isinstance(loss_fn, RidgeLoss) 
+                              if (isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss))
                               else float(loss_fn(self.model(features), targets).item()))
 
             if candidate_loss > float(loss.item()):

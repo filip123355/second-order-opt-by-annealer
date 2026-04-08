@@ -48,11 +48,9 @@ class Logistic(BaseLinearModel):
     """Binary or multiclass logistic regression."""
     pass 
 
-
 class SVM(BaseLinearModel):
     """Linear Support Vector Machine (outputs raw scores)."""
-    pass 
-
+    pass
 
 class ElasticNet(BaseLinearModel):
     """Linear model with Elastic Net regularization."""
