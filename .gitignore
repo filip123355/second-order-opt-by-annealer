@@ -49,3 +49,4 @@ Thumbs.db
 *.whl
 MANIFEST
 /plots
+/results

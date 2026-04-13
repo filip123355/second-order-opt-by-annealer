@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+import random
+import numpy as np
 
 from torch.utils.data import DataLoader
 from dwave.system import DWaveSampler, EmbeddingComposite, LeapHybridSampler
@@ -14,15 +16,21 @@ from src.gpu_simulated_annealing.gpu_simulated_annealing import GPUSimulatedAnne
 from .losses import RidgeLoss, SVMSquaredHingeLoss
 from typing import Optional
 
+
+def set_global_seed(seed: int) -> None:
+    """Set global random seed across Python, NumPy and PyTorch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 def build_sampler(mode: str = "simulated",
 ) -> DWaveSampler | ExactSolver | SimulatedAnnealingSampler | GPUSimulatedAnnealingSampler:
     normalized_mode = mode.lower() 
 
     # TODO: Discuss adding the controlls with Paweł
-
-    if normalized_mode == "dwave":
-        pass
-
+    
     if normalized_mode == "dwave":
         try:
             token = os.environ.get("DWAVE_API_TOKEN")
@@ -50,7 +58,7 @@ def build_sampler(mode: str = "simulated",
     elif normalized_mode == "gpu_simulated":
         return GPUSimulatedAnnealingSampler()
 
-    raise ValueError("mode must be one of: simulated, exact, dwave")
+    raise ValueError("mode must be one of: simulated, exact, dwave, hybrid, gpu_simulated")
 
 
 def evaluate(
@@ -151,8 +159,14 @@ def data_load_and_prep(dataset_name: str,
     if not random_state:
         random_state = torch.seed()
     
+    stratify_targets = None if dataset_name.lower() == "diabetes" else y
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y, shuffle=shuffle,
+        X,
+        y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=stratify_targets,
+        shuffle=shuffle,
     )
     
     if isinstance(batch_size, str) and batch_size.lower() == "full":

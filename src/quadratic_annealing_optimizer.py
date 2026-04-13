@@ -43,6 +43,41 @@ class QuadraticAnnealingOptimizer:
         self.param_groups = [self.defaults]
         self.momentum: torch.Tensor | None = None
 
+    def _extract_backend_metadata(self, response: dimod.SampleSet) -> dict[str, float | str | None]:
+        info = response.info if isinstance(response.info, dict) else {}
+        timing = info.get("timing", {}) if isinstance(info.get("timing", {}), dict) else {}
+
+        def _first_float(*keys: str) -> float | None:
+            for key in keys:
+                value = None
+                if key in info:
+                    value = info.get(key)
+                elif key in timing:
+                    value = timing.get(key)
+                if value is None:
+                    continue
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        return {
+            "sampler_name": type(self.sampler).__name__,
+            "solver_id": str(info.get("problem_id") or info.get("solver") or info.get("solver_id") or ""),
+            "qpu_access_time": _first_float("qpu_access_time", "qpu_access_time_us"),
+            "qpu_sampling_time": _first_float("qpu_sampling_time", "qpu_sampling_time_us"),
+            "qpu_readout_time": _first_float("qpu_readout_time", "qpu_readout_time_us"),
+            "qpu_anneal_time_per_sample": _first_float(
+                "qpu_anneal_time_per_sample",
+                "qpu_anneal_time_per_sample_us",
+            ),
+            "qpu_delay_time_per_sample": _first_float(
+                "qpu_delay_time_per_sample",
+                "qpu_delay_time_per_sample_us",
+            ),
+        }
+
     def _selected_indices(self, grad_vec: torch.Tensor) -> torch.Tensor:
 
         """
@@ -162,7 +197,7 @@ class QuadraticAnnealingOptimizer:
              features: torch.Tensor, 
              targets: torch.Tensor, 
              loss_fn: nn.Module,
-    ) -> dict[str, float | bool | int]:
+    ) -> dict[str, float | bool | int | str | None]:
         """ 
         Single optimization step.
         """
@@ -180,6 +215,7 @@ class QuadraticAnnealingOptimizer:
         _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
         bqm = self.build_bqm(selected_indices, grad_block, hessian_block)
         response = self.sample_bqm(bqm)
+        backend_metadata = self._extract_backend_metadata(response)
 
         delta = torch.zeros_like(current_params)
         for parameter_index in selected_indices.tolist():
@@ -209,12 +245,14 @@ class QuadraticAnnealingOptimizer:
             if accepted and self.defaults.get("beta", None) is not None:
                 self.momentum[selected_indices] = delta[selected_indices]
 
-        return {
+        result: dict[str, float | bool | int | str | None] = {
             "loss": effective_loss,
             "quadratic_energy": float(response.first.energy),
             "accepted": accepted,
             "selected_variables": int(selected_indices.numel()),
         }
+        result.update(backend_metadata)
+        return result
     
 
 if __name__ == "__main__":

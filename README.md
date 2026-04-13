@@ -9,13 +9,14 @@ scripts, and example notebooks used to reproduce experiments.
 ## Highlights
 
 - Local quadratic approximation + annealer-based discrete proposals
-- Support for exact solver and simulated annealing backends
+- Support for exact, simulated, hybrid, D-Wave and GPU simulated annealing backends
 - Selective-parameter updates: operate on a block of parameters per step
 - Pluggable loss functions (examples include ridge-regularized losses)
+- Batch and epoch logging for annealer telemetry, including QPU timing and qubit temperature when available
 
 ## Quick start
 
-1. Create and activate a Python virtual environment and install dependencies:
+Create and activate a Python virtual environment and install dependencies:
 
 ```bash
 python -m venv venv
@@ -24,13 +25,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-1. Run a notebook example (open in your browser):
-
-```bash
-jupyter notebook notebooks/experiments.ipynb
-```
-
-1. Example: run a training script or reproduce a notebook cell that instantiates the optimizer:
+Example: run a training script or reproduce a notebook cell that instantiates the optimizer:
 
 ```python
 from src.quadratic_annealing_optimizer import QuadraticAnnealingOptimizer
@@ -42,10 +37,55 @@ optimizer = QuadraticAnnealingOptimizer(
     subset_size=12,
     step_size=0.05,
     num_reads=200,
-    beta1=0.9,  # Adam-style first moment; `beta` is still accepted as alias
-    beta2=0.999,
-    eps=1e-8,
+    beta=0.9,
 )
+```
+
+## Reproducible runs
+
+Use a fixed seed for deterministic splits and stochastic operators:
+
+```python
+from src.utils import set_global_seed
+
+set_global_seed(42)
+```
+
+The `train(...)` function now accepts a `seed` argument and logs it to MLflow.
+
+## Run Experiment Grid (JSON/CSV + MLflow)
+
+Use the grid runner to execute multiple configurations from CLI:
+
+```bash
+python scripts/run_experiment_grid.py \
+  --model mlp \
+  --dataset iris \
+  --optimizer qa \
+  --samplers simulated,dwave,hybrid \
+  --subset-sizes 8,12 \
+  --step-sizes 0.03,0.05 \
+  --num-reads 100,200 \
+  --seeds 7,21,42 \
+  --epochs 20 \
+  --output-dir results
+```
+
+The script saves per-run summaries to JSON/CSV and logs full metrics to MLflow.
+
+## Compare Optimizers On One Task
+
+Use this script to compare different optimizers on the same model and dataset (workflow similar to notebooks):
+
+```bash
+python scripts/run_optimizer_comparison.py \
+  --model mlp \
+  --dataset iris \
+  --optimizers qa,adam,lbfgs,newton \
+  --qa-samplers simulated \
+  --epochs 20 \
+  --seed 42 \
+  --output-dir results
 ```
 
 ## Where useful experiment artifacts are stored
@@ -57,7 +97,8 @@ optimizer = QuadraticAnnealingOptimizer(
 ## Development notes
 
 - Python compatibility: developed against Python 3.10+. Use a virtual environment.
-- Tests and CI: no formal test suite is included; run notebooks to verify experiments.
+- Smoke tests are available in `tests/test_smoke.py`.
+- Run smoke tests with `python -m unittest tests.test_smoke`.
 - If you modify the optimizer state logic, ensure acceptance/rejection semantics are
   preserved: proposed moment/state updates should normally only be committed after an
   accepted candidate.
