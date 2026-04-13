@@ -9,7 +9,7 @@ scripts, and example notebooks used to reproduce experiments.
 ## Highlights
 
 - Local quadratic approximation + annealer-based discrete proposals
-- Support for exact, simulated, hybrid, D-Wave and GPU simulated annealing backends
+- Support for exact, simulated, hybrid, D-Wave, GPU simulated annealing and veloxQ backends
 - Selective-parameter updates: operate on a block of parameters per step
 - Pluggable loss functions (examples include ridge-regularized losses)
 - Batch and epoch logging for annealer telemetry, including QPU timing and qubit temperature when available
@@ -39,6 +39,15 @@ optimizer = QuadraticAnnealingOptimizer(
     num_reads=200,
     beta=0.9,
 )
+```
+
+## Quantum backend configuration
+
+For the full access to D-Wave's annealers or VeloxQ algorithms you need a D-Wave and VeloxQ API tokens, respecively. Create a `.env` file in the project root with the following content:
+
+```bash
+D_WAVE_API_TOKEN=your_dwave_api_token_here
+VELOXQ_API_TOKEN=your_veloxq_api_token_here
 ```
 
 ## Reproducible runs
@@ -72,6 +81,33 @@ python scripts/run_experiment_grid.py \
 ```
 
 The script saves per-run summaries to JSON/CSV and logs full metrics to MLflow.
+
+## veloxQ backend
+
+The optimizer can use veloxQ through sampler modes passed to `build_sampler(mode=...)`.
+
+Supported veloxQ modes:
+
+- `veloxq` (default VeloxQ solver on H100_1)
+- `veloxq_h100_1`
+- `veloxq_h100_2`
+- `veloxq_plgrid_gh200`
+- `veloxq_sbm`
+- `veloxq_sbm_h100_1`
+- `veloxq_sbm_h100_2`
+- `veloxq_sbm_plgrid_gh200`
+
+Example run:
+
+```bash
+python scripts/run_experiment_grid.py \
+  --model mlp \
+  --dataset digits \
+  --optimizer qa \
+  --samplers veloxq_h100_1 \
+  --num-reads 1024 \
+  --epochs 10
+```
 
 ## Compare Optimizers On One Task
 

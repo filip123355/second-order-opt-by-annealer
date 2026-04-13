@@ -1,6 +1,8 @@
 /data
 /venv
 /mlruns
+/plots
+/results
 TODO.txt
 .env
 mlflow.db
@@ -48,5 +50,5 @@ Thumbs.db
 # Wheel / packaging metadata
 *.whl
 MANIFEST
-/plots
-/results
+
+

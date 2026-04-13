@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset
 from src.gpu_simulated_annealing.gpu_simulated_annealing import GPUSimulatedAnnealingSampler
 from .losses import RidgeLoss, SVMSquaredHingeLoss
-from typing import Optional
+from typing import Optional, Any
 
 
 def set_global_seed(seed: int) -> None:
@@ -26,7 +26,7 @@ def set_global_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 def build_sampler(mode: str = "simulated",
-) -> DWaveSampler | ExactSolver | SimulatedAnnealingSampler | GPUSimulatedAnnealingSampler:
+) -> Any:
     normalized_mode = mode.lower() 
 
     # TODO: Discuss adding the controlls with Paweł
@@ -58,7 +58,36 @@ def build_sampler(mode: str = "simulated",
     elif normalized_mode == "gpu_simulated":
         return GPUSimulatedAnnealingSampler()
 
-    raise ValueError("mode must be one of: simulated, exact, dwave, hybrid, gpu_simulated")
+    elif normalized_mode in {
+        "veloxq",
+        "veloxq_h100_1",
+        "veloxq_h100_2",
+        "veloxq_plgrid_gh200",
+        "veloxq_sbm",
+        "veloxq_sbm_h100_1",
+        "veloxq_sbm_h100_2",
+        "veloxq_sbm_plgrid_gh200",
+    }:
+        from .veloxq_sampler import VeloxQSampler
+
+        mode_map = {
+            "veloxq": ("h100_1", "veloxq"),
+            "veloxq_h100_1": ("h100_1", "veloxq"),
+            "veloxq_h100_2": ("h100_2", "veloxq"),
+            "veloxq_plgrid_gh200": ("plgrid_gh200", "veloxq"),
+            "veloxq_sbm": ("h100_1", "sbm"),
+            "veloxq_sbm_h100_1": ("h100_1", "sbm"),
+            "veloxq_sbm_h100_2": ("h100_2", "sbm"),
+            "veloxq_sbm_plgrid_gh200": ("plgrid_gh200", "sbm"),
+        }
+        backend, solver = mode_map[normalized_mode]
+        return VeloxQSampler(backend=backend, solver=solver)
+
+    raise ValueError(
+        "mode must be one of: simulated, exact, dwave, hybrid, gpu_simulated, "
+        "veloxq, veloxq_h100_1, veloxq_h100_2, veloxq_plgrid_gh200, "
+        "veloxq_sbm, veloxq_sbm_h100_1, veloxq_sbm_h100_2, veloxq_sbm_plgrid_gh200"
+    )
 
 
 def evaluate(
