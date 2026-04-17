@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 import dimod
+from time import perf_counter
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
@@ -77,6 +78,50 @@ class QuadraticAnnealingOptimizer:
                 "qpu_delay_time_per_sample_us",
             ),
         }
+
+    def _extract_sampling_breakdown(
+        self,
+        response: dimod.SampleSet,
+        sample_total_time_sec: float,
+    ) -> tuple[float, float]:
+        """Return (transfer_time_sec, sampling_time_sec) for one sampler call."""
+        info = response.info if isinstance(response.info, dict) else {}
+
+        def _as_float(value: object) -> float | None:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        transfer_time = _as_float(info.get("transfer_time_sec"))
+        backend_sampling_time = _as_float(info.get("backend_sampling_time_sec"))
+        if transfer_time is not None and backend_sampling_time is not None:
+            return max(0.0, transfer_time), max(0.0, backend_sampling_time)
+
+        # D-Wave exposes QPU timing mostly in microseconds. Convert if available and
+        # estimate communication/overhead as sample_total - qpu_access.
+        qpu_access = _as_float(info.get("qpu_access_time"))
+        if qpu_access is None and isinstance(info.get("timing"), dict):
+            qpu_access = _as_float(info["timing"].get("qpu_access_time"))
+
+        qpu_access_us = _as_float(info.get("qpu_access_time_us"))
+        if qpu_access_us is None and isinstance(info.get("timing"), dict):
+            qpu_access_us = _as_float(info["timing"].get("qpu_access_time_us"))
+
+        if qpu_access is not None:
+            sampling_time_sec = max(0.0, qpu_access * 1e-6)
+            transfer_time_sec = max(0.0, sample_total_time_sec - sampling_time_sec)
+            return transfer_time_sec, sampling_time_sec
+
+        if qpu_access_us is not None:
+            sampling_time_sec = max(0.0, qpu_access_us * 1e-6)
+            transfer_time_sec = max(0.0, sample_total_time_sec - sampling_time_sec)
+            return transfer_time_sec, sampling_time_sec
+
+        # Fallback for local/classical samplers where transfer is effectively zero.
+        return 0.0, max(0.0, sample_total_time_sec)
 
     def _selected_indices(self, grad_vec: torch.Tensor) -> torch.Tensor:
 
@@ -212,11 +257,24 @@ class QuadraticAnnealingOptimizer:
         if self.momentum is None or self.momentum.shape != current_params.shape or self.momentum.device != current_params.device or self.momentum.dtype != current_params.dtype:
             self.momentum = torch.zeros_like(current_params)
 
+        model_start = perf_counter()
         _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
-        bqm = self.build_bqm(selected_indices, grad_block, hessian_block)
-        response = self.sample_bqm(bqm)
-        backend_metadata = self._extract_backend_metadata(response)
+        quadratic_model_time_sec = float(perf_counter() - model_start)
 
+        build_bqm_start = perf_counter()
+        bqm = self.build_bqm(selected_indices, grad_block, hessian_block)
+        build_bqm_time_sec = float(perf_counter() - build_bqm_start)
+
+        sample_start = perf_counter()
+        response = self.sample_bqm(bqm)
+        sample_total_time_sec = float(perf_counter() - sample_start)
+        backend_metadata = self._extract_backend_metadata(response)
+        transfer_time_sec, sampling_time_sec = self._extract_sampling_breakdown(
+            response=response,
+            sample_total_time_sec=sample_total_time_sec,
+        )
+
+        update_start = perf_counter()
         delta = torch.zeros_like(current_params)
         for parameter_index in selected_indices.tolist():
             bit_value = response.first.sample[int(parameter_index)]
@@ -245,11 +303,19 @@ class QuadraticAnnealingOptimizer:
             if accepted and self.defaults.get("beta", None) is not None:
                 self.momentum[selected_indices] = delta[selected_indices]
 
+        update_time_sec = float(perf_counter() - update_start)
+
         result: dict[str, float | bool | int | str | None] = {
             "loss": effective_loss,
             "quadratic_energy": float(response.first.energy),
             "accepted": accepted,
             "selected_variables": int(selected_indices.numel()),
+            "quadratic_model_time_sec": quadratic_model_time_sec,
+            "build_bqm_time_sec": build_bqm_time_sec,
+            "transfer_time_sec": transfer_time_sec,
+            "sampling_time_sec": sampling_time_sec,
+            "sample_total_time_sec": sample_total_time_sec,
+            "update_time_sec": update_time_sec,
         }
         result.update(backend_metadata)
         return result

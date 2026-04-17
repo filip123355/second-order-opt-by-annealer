@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from time import perf_counter
 
 import dimod
 
@@ -103,18 +104,24 @@ class VeloxQSampler:
         if parameters is not None and num_steps is not None and hasattr(parameters, "num_steps"):
             parameters.num_steps = int(num_steps)
 
+        transfer_start = perf_counter()
         file_obj = self._sdk.File.from_bqm(bqm)
         job = self._solver_instance.submit(file_obj)
+        transfer_time_sec = float(perf_counter() - transfer_start)
 
+        backend_sampling_start = perf_counter()
         if self.wait_timeout is None:
             job.wait_for_completion(refresh=self.refresh_on_completion)
         else:
             job.wait_for_completion(timeout=self.wait_timeout, refresh=self.refresh_on_completion)
+        backend_sampling_time_sec = float(perf_counter() - backend_sampling_start)
 
         result = job.result
         if isinstance(result.info, dict):
             result.info.setdefault("solver", self.solver)
             result.info.setdefault("backend", self.backend)
             result.info.setdefault("job_id", str(getattr(job, "id", "")))
+            result.info.setdefault("transfer_time_sec", transfer_time_sec)
+            result.info.setdefault("backend_sampling_time_sec", backend_sampling_time_sec)
 
         return result

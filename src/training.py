@@ -97,6 +97,12 @@ def train(
                 "qpu_readout_time": [],
                 "qpu_anneal_time_per_sample": [],
                 "qpu_delay_time_per_sample": [],
+                "quadratic_model_time_sec": [],
+                "build_bqm_time_sec": [],
+                "transfer_time_sec": [],
+                "sampling_time_sec": [],
+                "sample_total_time_sec": [],
+                "update_time_sec": [],
             }
 
             for features, targets in train_loader:

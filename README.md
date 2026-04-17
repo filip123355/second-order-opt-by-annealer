@@ -177,6 +177,37 @@ python scripts/run_block_size_comparison.py \
   --output-dir results
 ```
 
+## Overhead Communication Experiment
+
+Use this script to profile QA step-time components and identify bottlenecks before publication.
+It breaks the QA step into:
+
+- `build_bqm_time_sec`
+- `transfer_time_sec`
+- `sampling_time_sec`
+- `update_time_sec`
+
+Then it computes percentage shares and plots `time share [%]` versus problem size (`subset_size`).
+
+Example run:
+
+```bash
+python scripts/run_overhead_breakdown.py \
+  --model mlp \
+  --dataset digits \
+  --qa-samplers simulated,dwave \
+  --subset-sizes 6,12,24,36 \
+  --seeds 7,21,42 \
+  --epochs 20 \
+  --output-dir results
+```
+
+Produced artifacts:
+
+- `*_runs.json`, `*_runs.csv`: per-run absolute times and shares
+- `*_summary.json`, `*_summary.csv`: aggregated means/std over seeds
+- `*_<sampler>_share_vs_subset_size.png`: stacked share plot for bottleneck analysis
+
 ## Where useful experiment artifacts are stored
 
 - `mlruns/`: MLflow run directories (if experiments used MLflow)
