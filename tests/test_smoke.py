@@ -232,6 +232,49 @@ class SmokeTests(unittest.TestCase):
             self.assertTrue(list(Path(tmpdir).glob("overhead_smoke_*_summary.csv")))
             self.assertTrue(list(Path(tmpdir).glob("overhead_smoke_*_share_vs_subset_size.png")))
 
+    def test_sampler_transition_analysis_script_writes_expected_artifacts(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_sampler_transition_analysis.py"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            command = [
+                sys.executable,
+                str(script),
+                "--model",
+                "mlp",
+                "--dataset",
+                "iris",
+                "--samplers",
+                "simulated,hybrid",
+                "--subset-sizes",
+                "2",
+                "--step-sizes",
+                "0.05",
+                "--num-reads",
+                "10",
+                "--epochs",
+                "1",
+                "--batch-size",
+                "full",
+                "--seeds",
+                "1,2",
+                "--output-dir",
+                tmpdir,
+                "--output-prefix",
+                "transition_smoke",
+                "--quiet",
+            ]
+            subprocess.run(command, cwd=repo_root, check=True, capture_output=True, text=True)
+
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_runs.json")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_runs.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_sampler_summary.json")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_sampler_summary.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_bad_run_analysis.json")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_bad_run_analysis.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_quality_distribution_boxplot.png")))
+            self.assertTrue(list(Path(tmpdir).glob("transition_smoke_*_bad_run_rate.png")))
+
 
 if __name__ == "__main__":
     unittest.main()

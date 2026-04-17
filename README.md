@@ -208,6 +208,34 @@ Produced artifacts:
 - `*_summary.json`, `*_summary.csv`: aggregated means/std over seeds
 - `*_<sampler>_share_vs_subset_size.png`: stacked share plot for bottleneck analysis
 
+## Sampler Transition Analysis (simulated -> hybrid -> QPU)
+
+Use this script to run the same QA hyperparameter grid across sampler backends and test distribution-level effects across many seeds.
+
+It reports:
+
+- run-level results for every `(config, sampler, seed)`
+- per-sampler distribution statistics (`mean`, `std`, `var`, quantiles)
+- bad-run analysis per shared config (to test whether QPU reduces the fraction of poor outcomes)
+- plots: quality boxplot per sampler and bad-run-rate bar chart
+
+Example run:
+
+```bash
+python scripts/run_sampler_transition_analysis.py \
+  --model mlp \
+  --dataset digits \
+  --samplers simulated,hybrid,dwave \
+  --subset-sizes 8,12 \
+  --step-sizes 0.03,0.05 \
+  --num-reads 100,200 \
+  --seeds 7,21,42,84,168 \
+  --epochs 20 \
+  --quality-metric final_test_metric \
+  --quality-direction auto \
+  --output-dir results
+```
+
 ## Where useful experiment artifacts are stored
 
 - `mlruns/`: MLflow run directories (if experiments used MLflow)
