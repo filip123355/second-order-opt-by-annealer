@@ -124,6 +124,59 @@ python scripts/run_optimizer_comparison.py \
   --output-dir results
 ```
 
+## Quality Vs Wall-Clock Benchmark
+
+Use this script to compare optimization quality as a function of elapsed wall-clock time.
+It exports three levels of artifacts:
+
+- run summaries (`*_runs.json`, `*_runs.csv`)
+- per-epoch time series (`*_timeline.json`, `*_timeline.csv`)
+- quality at fixed time budgets (`*_budget_raw.*` and aggregated `*_budget_summary.*`)
+
+Example run:
+
+```bash
+python scripts/run_quality_vs_wallclock.py \
+  --model mlp \
+  --dataset digits \
+  --optimizers qa,adam,lbfgs,newton \
+  --qa-samplers simulated,dwave,hybrid \
+  --seeds 7,21,42 \
+  --epochs 30 \
+  --quality-metric test_metric \
+  --quality-direction auto \
+  --time-grid-points 20 \
+  --output-dir results
+```
+
+Tip:
+
+- For classification datasets, `test_metric` means accuracy and should be maximized.
+- For diabetes regression, `test_metric` means MSE and should be minimized.
+- `--epochs` controls training horizon for each run; the quality-vs-time comparison is created by sampling each run's timeline at the same wall-clock budgets.
+- `--time-grid` or `--time-grid-points` controls where quality is sampled on the time axis for the final comparison tables.
+
+## QA Block Size Comparison
+
+Use this script to compare different QA `subset_size` values with the same wall-clock sampling methodology.
+It generates the same artifact structure as the quality-vs-wall-clock benchmark.
+
+Example run:
+
+```bash
+python scripts/run_block_size_comparison.py \
+  --model mlp \
+  --dataset digits \
+  --qa-samplers simulated,dwave \
+  --subset-sizes 6,12,24,36 \
+  --seeds 7,21,42 \
+  --epochs 30 \
+  --quality-metric test_metric \
+  --quality-direction auto \
+  --time-grid-points 20 \
+  --output-dir results
+```
+
 ## Where useful experiment artifacts are stored
 
 - `mlruns/`: MLflow run directories (if experiments used MLflow)

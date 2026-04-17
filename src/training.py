@@ -29,7 +29,8 @@ def train(
     run_name: str | None = None,
     verbose: bool = True,
     seed: int | None = None,
-) -> dict[str, float | str | int | None]:
+    collect_epoch_history: bool = False,
+) -> dict[str, object]:
     if seed is not None:
         set_global_seed(seed)
 
@@ -52,7 +53,8 @@ def train(
         mlflow.set_tracking_uri(default_tracking_uri)
         mlflow.set_experiment(experiment_name)
 
-    summary: dict[str, float | str | int | None] = {}
+    summary: dict[str, object] = {}
+    epoch_history: list[dict[str, float | int]] = []
     with mlflow.start_run(run_name=run_name) as active_run:
         mlflow.log_params(
             {
@@ -192,6 +194,31 @@ def train(
                 step=epoch,
             )
 
+            if collect_epoch_history:
+                elapsed_time_sec = float(perf_counter() - start_time)
+                epoch_entry: dict[str, float | int] = {
+                    "epoch": int(epoch),
+                    "elapsed_time_sec": elapsed_time_sec,
+                    "train_loss": float(train_loss),
+                    "test_loss": float(test_loss),
+                }
+
+                if isinstance(loss_fn, RidgeLoss):
+                    epoch_entry["train_metric"] = float(train_metric)  # MSE
+                    epoch_entry["test_metric"] = float(test_metric)   # MSE
+                else:
+                    epoch_entry["train_metric"] = float(train_metric)  # Accuracy
+                    epoch_entry["test_metric"] = float(test_metric)   # Accuracy
+
+                if isinstance(optimizer, QuadraticAnnealingOptimizer):
+                    epoch_entry["acceptance_rate"] = float(accepted_steps / len(train_loader))
+                    epoch_entry["train_quadratic_energy"] = float(sum(batch_energies) / len(batch_energies))
+                    for metric_name, values in backend_metric_values.items():
+                        if values:
+                            epoch_entry[metric_name] = float(sum(values) / len(values))
+
+                epoch_history.append(epoch_entry)
+
             if verbose and (epoch % 5 == 0 or epoch == epochs - 1):
                 print(
                     f"Epoch {epoch:03d} | "
@@ -218,5 +245,7 @@ def train(
             "optimizer": type(optimizer).__name__,
             "seed": int(seed) if seed is not None else None,
         }
+        if collect_epoch_history:
+            summary["epoch_history"] = epoch_history
 
     return summary

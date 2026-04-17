@@ -114,6 +114,88 @@ class SmokeTests(unittest.TestCase):
             csv_files = list(Path(tmpdir).glob("compare_smoke_*.csv"))
             self.assertTrue(csv_files)
 
+    def test_quality_vs_wallclock_script_writes_expected_artifacts(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_quality_vs_wallclock.py"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            command = [
+                sys.executable,
+                str(script),
+                "--model",
+                "mlp",
+                "--dataset",
+                "iris",
+                "--optimizers",
+                "adam,qa",
+                "--qa-samplers",
+                "simulated",
+                "--epochs",
+                "1",
+                "--batch-size",
+                "full",
+                "--seeds",
+                "1",
+                "--time-grid",
+                "0.0,1.0",
+                "--output-dir",
+                tmpdir,
+                "--output-prefix",
+                "qvw_smoke",
+                "--quiet",
+            ]
+            subprocess.run(command, cwd=repo_root, check=True, capture_output=True, text=True)
+
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_runs.json")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_runs.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_timeline.json")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_timeline.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_budget_raw.json")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_budget_raw.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_budget_summary.json")))
+            self.assertTrue(list(Path(tmpdir).glob("qvw_smoke_*_budget_summary.csv")))
+
+    def test_block_size_comparison_script_writes_expected_artifacts(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_block_size_comparison.py"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            command = [
+                sys.executable,
+                str(script),
+                "--model",
+                "mlp",
+                "--dataset",
+                "iris",
+                "--qa-samplers",
+                "simulated",
+                "--subset-sizes",
+                "2,4",
+                "--epochs",
+                "1",
+                "--batch-size",
+                "full",
+                "--seeds",
+                "1",
+                "--time-grid",
+                "0.0,1.0",
+                "--output-dir",
+                tmpdir,
+                "--output-prefix",
+                "block_smoke",
+                "--quiet",
+            ]
+            subprocess.run(command, cwd=repo_root, check=True, capture_output=True, text=True)
+
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_runs.json")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_runs.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_timeline.json")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_timeline.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_budget_raw.json")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_budget_raw.csv")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_budget_summary.json")))
+            self.assertTrue(list(Path(tmpdir).glob("block_smoke_*_budget_summary.csv")))
+
 
 if __name__ == "__main__":
     unittest.main()
