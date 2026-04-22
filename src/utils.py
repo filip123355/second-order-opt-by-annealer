@@ -15,6 +15,7 @@ from torch.utils.data import TensorDataset
 from src.gpu_simulated_annealing.gpu_simulated_annealing import GPUSimulatedAnnealingSampler
 from .losses import RidgeLoss, SVMSquaredHingeLoss
 from typing import Optional, Any
+from dotenv import load_dotenv
 
 
 def set_global_seed(seed: int) -> None:
@@ -32,6 +33,7 @@ def build_sampler(mode: str = "simulated",
     # TODO: Discuss adding the controlls with Paweł
     
     if normalized_mode == "dwave":
+        load_dotenv()
         try:
             token = os.environ.get("DWAVE_API_TOKEN")
             endpoint = os.environ.get("DWAVE_API_ENDPOINT")
@@ -41,13 +43,14 @@ def build_sampler(mode: str = "simulated",
             return SimulatedAnnealingSampler()
         
     elif normalized_mode == "hybrid":
-        try:
-            token = os.environ.get("DWAVE_API_TOKEN")
-            endpoint = os.environ.get("DWAVE_API_ENDPOINT")
-            return LeapHybridSampler(token=token, endpoint=endpoint)
-        except Exception as exc:
-            print(f"Falling back to simulated annealing because the hybrid solver is unavailable: {exc}")
-            return SimulatedAnnealingSampler()
+        # try:
+        #     token = os.environ.get("DWAVE_API_TOKEN")
+        #     endpoint = os.environ.get("DWAVE_API_ENDPOINT")
+        #     return LeapHybridSampler(token=token, endpoint=endpoint)
+        # except Exception as exc:
+        #     print(f"Falling back to simulated annealing because the hybrid solver is unavailable: {exc}")
+        #     return SimulatedAnnealingSampler()
+        raise NotImplementedError("The LeapHybrid Sampler is too resource-intensive. If you are rich, go for it, but it's not suitable for this project.")
 
     elif normalized_mode == "exact":
         return ExactSolver()
@@ -58,30 +61,27 @@ def build_sampler(mode: str = "simulated",
     elif normalized_mode == "gpu_simulated":
         return GPUSimulatedAnnealingSampler()
 
-    elif normalized_mode in {
-        "veloxq",
-        "veloxq_h100_1",
-        "veloxq_h100_2",
-        "veloxq_plgrid_gh200",
-        "veloxq_sbm",
-        "veloxq_sbm_h100_1",
-        "veloxq_sbm_h100_2",
-        "veloxq_sbm_plgrid_gh200",
-    }:
-        from .veloxq_sampler import VeloxQSampler
+    elif normalized_mode == "veloxq":
+        # from .veloxq_sampler import VeloxQSampler
+        from veloxq_sdk  import VeloxQSolver, PLGridGH200
+        from veloxq_sdk.config import VeloxQAPIConfig, load_config
 
-        mode_map = {
-            "veloxq": ("h100_1", "veloxq"),
-            "veloxq_h100_1": ("h100_1", "veloxq"),
-            "veloxq_h100_2": ("h100_2", "veloxq"),
-            "veloxq_plgrid_gh200": ("plgrid_gh200", "veloxq"),
-            "veloxq_sbm": ("h100_1", "sbm"),
-            "veloxq_sbm_h100_1": ("h100_1", "sbm"),
-            "veloxq_sbm_h100_2": ("h100_2", "sbm"),
-            "veloxq_sbm_plgrid_gh200": ("plgrid_gh200", "sbm"),
-        }
-        backend, solver = mode_map[normalized_mode]
-        return VeloxQSampler(backend=backend, solver=solver)
+        load_dotenv() 
+        load_config() 
+        
+        backend = PLGridGH200()
+        return VeloxQSolver(backend=backend)
+    
+    # elif normalized_mode == "veloxq_sbm":
+    #     from veloxq_sdk import SBMSolver, PLGridGH200
+    #     from veloxq_sdk.config import VeloxQAPIConfig, load_config
+
+    #     load_dotenv() 
+    #     load_config() 
+        
+    #     backend = PLGridGH200()
+    #     return SBMSolver(backend=backend)
+    # We do not have access to the SMB solver through PLGrid.
 
     raise ValueError(
         "mode must be one of: simulated, exact, dwave, hybrid, gpu_simulated, "

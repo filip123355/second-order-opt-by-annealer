@@ -6,6 +6,7 @@ from time import perf_counter
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
 from .losses import RidgeLoss, SVMSquaredHingeLoss
+from veloxq_sdk import VeloxQSolver
 class QuadraticAnnealingOptimizer:
     """An optimizer that uses a quadratic approximation of the loss landscape to construct a binary quadratic model, 
     which is then optimized using a quantum annealer or a classical sampler. The optimizer selects a subset of parameters 
@@ -43,10 +44,14 @@ class QuadraticAnnealingOptimizer:
         }
         self.param_groups = [self.defaults]
         self.momentum: torch.Tensor | None = None
+        assert self.defaults["beta"] >= 0.0 and self.defaults["beta"] <= 1.0 if self.defaults["beta"] is not None else True, "beta must be in [0, 1]"
 
-    def _extract_backend_metadata(self, response: dimod.SampleSet) -> dict[str, float | str | None]:
+    def _extract_backend_metadata(self, 
+                                  response: dimod.SampleSet,
+    ) -> dict[str, float | str | None]:
         info = response.info if isinstance(response.info, dict) else {}
         timing = info.get("timing", {}) if isinstance(info.get("timing", {}), dict) else {}
+        embedding_context = info.get("embedding_context", {}) if isinstance(info.get("embedding_context", {}), dict) else {}
 
         def _first_float(*keys: str) -> float | None:
             for key in keys:
@@ -63,6 +68,67 @@ class QuadraticAnnealingOptimizer:
                     continue
             return None
 
+        def _chain_metrics() -> dict[str, float | None]:
+            embedding = embedding_context.get("embedding")
+            if not isinstance(embedding, dict):
+                return {
+                    "avg_chain_length": None,
+                    "max_chain_length": None,
+                    "min_chain_length": None,
+                    "num_chains": None,
+                    "num_physical_qubits": None,
+                }
+
+            chain_lengths: list[int] = []
+            physical_qubits: set[int] = set()
+            for chain in embedding.values():
+                if isinstance(chain, (list, tuple, set)):
+                    chain_list = list(chain)
+                    if not chain_list:
+                        continue
+                    chain_lengths.append(len(chain_list))
+                    for qubit in chain_list:
+                        if isinstance(qubit, int):
+                            physical_qubits.add(qubit)
+
+            if not chain_lengths:
+                return {
+                    "avg_chain_length": None,
+                    "max_chain_length": None,
+                    "min_chain_length": None,
+                    "num_chains": None,
+                    "num_physical_qubits": None,
+                }
+
+            return {
+                "avg_chain_length": float(sum(chain_lengths) / len(chain_lengths)),
+                "max_chain_length": float(max(chain_lengths)),
+                "min_chain_length": float(min(chain_lengths)),
+                "num_chains": float(len(chain_lengths)),
+                "num_physical_qubits": float(len(physical_qubits)) if physical_qubits else None,
+            }
+
+        def _chain_break_fraction() -> float | None:
+            value = _first_float("chain_break_fraction")
+            if value is not None:
+                return value
+
+            record = getattr(response, "record", None)
+            dtype = getattr(record, "dtype", None)
+            names = getattr(dtype, "names", None)
+            if record is None or not names or "chain_break_fraction" not in names:
+                return None
+
+            try:
+                values = record["chain_break_fraction"]
+                if len(values) == 0:
+                    return None
+                return float(values.mean())
+            except Exception:
+                return None
+
+        chain_metrics = _chain_metrics()
+
         return {
             "sampler_name": type(self.sampler).__name__,
             "solver_id": str(info.get("problem_id") or info.get("solver") or info.get("solver_id") or ""),
@@ -73,10 +139,17 @@ class QuadraticAnnealingOptimizer:
                 "qpu_anneal_time_per_sample",
                 "qpu_anneal_time_per_sample_us",
             ),
-            "qpu_delay_time_per_sample": _first_float(
+            "qpu_delay_time_per_sample": _first_float(# TODO: Now names are guesses. needs to be addressed.
                 "qpu_delay_time_per_sample",
                 "qpu_delay_time_per_sample_us",
             ),
+            "chain_strength": _first_float("chain_strength"),
+            "chain_break_fraction": _chain_break_fraction(),
+            "avg_chain_length": chain_metrics["avg_chain_length"],
+            "max_chain_length": chain_metrics["max_chain_length"],
+            "min_chain_length": chain_metrics["min_chain_length"],
+            "num_chains": chain_metrics["num_chains"],
+            "num_physical_qubits": chain_metrics["num_physical_qubits"],
         }
 
     def _extract_sampling_breakdown(
@@ -235,6 +308,9 @@ class QuadraticAnnealingOptimizer:
         Sampling from BQM according to chosen sampler.
         """
         if isinstance(self.sampler, ExactSolver):
+            return self.sampler.sample(bqm)
+        elif isinstance(self.sampler, VeloxQSolver):
+            self.sampler.parameters.num_rep = self.num_reads
             return self.sampler.sample(bqm)
         return self.sampler.sample(bqm, num_reads=self.num_reads)
 
