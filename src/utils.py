@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from torch.utils.data import DataLoader
-from dwave.system import DWaveSampler, EmbeddingComposite, LeapHybridSampler
+from dwave.system import DWaveSampler, LazyFixedEmbeddingComposite
 from dimod import ExactSolver
 from dwave.samplers import SimulatedAnnealingSampler
 from sklearn.model_selection import train_test_split
@@ -37,7 +37,7 @@ def build_sampler(mode: str = "simulated",
         try:
             token = os.environ.get("DWAVE_API_TOKEN")
             endpoint = os.environ.get("DWAVE_API_ENDPOINT")
-            return EmbeddingComposite(DWaveSampler(token=token, endpoint=endpoint))
+            return LazyFixedEmbeddingComposite(DWaveSampler(token=token, endpoint=endpoint)) # Resuing the same embedding across all runs
         except Exception as exc:
             print(f"Falling back to simulated annealing because the QPU is unavailable: {exc}")
             return SimulatedAnnealingSampler()
