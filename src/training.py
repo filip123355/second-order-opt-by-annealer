@@ -84,6 +84,7 @@ def train(
 
         start_time = perf_counter()
         global_step = 0
+        total_optimizer_time_sec = 0.0
         sampler_name_logged = False
         solver_id_logged = False
 
@@ -91,6 +92,7 @@ def train(
             model.train()
             batch_energies = []
             accepted_steps = 0
+            epoch_optimizer_time_values: list[float] = []
             backend_metric_values: dict[str, list[float]] = {
                 "qpu_access_time": [],
                 "qpu_sampling_time": [],
@@ -121,6 +123,16 @@ def train(
                     batch_energies.append(step_info["quadratic_energy"])
                     accepted_steps += int(step_info["accepted"])
 
+                    optimization_time_sec = step_info.get("optimization_time_sec")
+                    if optimization_time_sec is None:
+                        optimization_time_sec = (
+                            float(step_info.get("quadratic_model_time_sec", 0.0))
+                            + float(step_info.get("build_bqm_time_sec", 0.0))
+                            + float(step_info.get("sample_total_time_sec", 0.0))
+                            + float(step_info.get("update_time_sec", 0.0))
+                        )
+                    epoch_optimizer_time_values.append(float(optimization_time_sec))
+
                     if not sampler_name_logged and step_info.get("sampler_name"):
                         mlflow.log_param("sampler_name", str(step_info["sampler_name"]))
                         sampler_name_logged = True
@@ -136,6 +148,7 @@ def train(
                         backend_metric_values[metric_name].append(cast_value)
 
                 else:
+                    step_start = perf_counter()
                     if isinstance(optimizer, NewtonOptimizer):
                         def closure():
                             optimizer.zero_grad(set_to_none=True)
@@ -157,11 +170,13 @@ def train(
                             loss.backward()
                             return loss
                         optimizer.step(closure)
+                    epoch_optimizer_time_values.append(float(perf_counter() - step_start))
 
                 if log_batch_metrics and isinstance(optimizer, QuadraticAnnealingOptimizer):
                     log = {"batch_loss": float(step_info["loss"])}
                     log["batch_quadratic_energy"] = float(step_info["quadratic_energy"])
                     log["batch_accepted"] = float(step_info["accepted"])
+                    log["batch_optimization_time_sec"] = float(epoch_optimizer_time_values[-1])
 
                     for metric_name in backend_metric_values:
                         metric_value = step_info.get(metric_name)
@@ -193,6 +208,10 @@ def train(
                     "test_accuracy": float(test_metric),
                 }
 
+            epoch_optimizer_time_sec = float(sum(epoch_optimizer_time_values))
+            total_optimizer_time_sec += epoch_optimizer_time_sec
+            log["epoch_optimizer_time_sec"] = epoch_optimizer_time_sec
+
             if isinstance(optimizer, QuadraticAnnealingOptimizer):
                 acceptance_rate = accepted_steps / len(train_loader)
                 log["train_quadratic_energy"] = float(sum(batch_energies) / len(batch_energies))
@@ -212,6 +231,7 @@ def train(
                 epoch_entry: dict[str, float | int] = {
                     "epoch": int(epoch),
                     "elapsed_time_sec": elapsed_time_sec,
+                    "epoch_optimizer_time_sec": epoch_optimizer_time_sec,
                     "train_loss": float(train_loss),
                     "test_loss": float(test_loss),
                 }
@@ -242,6 +262,7 @@ def train(
                 )
 
         training_time = perf_counter() - start_time
+        mlflow.log_metric("optimizer_time_sec", float(total_optimizer_time_sec))
         mlflow.log_metric("training_time_sec", float(training_time))
         mlflow.pytorch.log_model(model, name="model")
 
@@ -250,6 +271,7 @@ def train(
             "experiment_id": str(active_run.info.experiment_id),
             "experiment_name": experiment_name,
             "tracking_uri": requested_tracking_uri,
+            "optimizer_time_sec": float(total_optimizer_time_sec),
             "training_time_sec": float(training_time),
             "final_train_loss": float(train_loss),
             "final_test_loss": float(test_loss),

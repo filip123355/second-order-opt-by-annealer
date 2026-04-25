@@ -46,6 +46,10 @@ class QuadraticAnnealingOptimizer:
         self.momentum: torch.Tensor | None = None
         assert self.defaults["beta"] >= 0.0 and self.defaults["beta"] <= 1.0 if self.defaults["beta"] is not None else True, "beta must be in [0, 1]"
 
+    def _sync_if_cuda(self) -> None:
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(self.device)
+
     def _extract_backend_metadata(self, 
                                   response: dimod.SampleSet,
     ) -> dict[str, float | str | None]:
@@ -333,16 +337,30 @@ class QuadraticAnnealingOptimizer:
         if self.momentum is None or self.momentum.shape != current_params.shape or self.momentum.device != current_params.device or self.momentum.dtype != current_params.dtype:
             self.momentum = torch.zeros_like(current_params)
 
+        self._sync_if_cuda()
         model_start = perf_counter()
         _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
+        self._sync_if_cuda()
         quadratic_model_time_sec = float(perf_counter() - model_start)
 
+        selected_indices_cpu = selected_indices.detach().cpu()
+        grad_block_cpu = grad_block.detach().cpu()
+        hessian_block_cpu = hessian_block.detach().cpu()
+
         build_bqm_start = perf_counter()
-        bqm = self.build_bqm(selected_indices, grad_block, hessian_block)
+        bqm = self.build_bqm(selected_indices_cpu, grad_block_cpu, hessian_block_cpu)
         build_bqm_time_sec = float(perf_counter() - build_bqm_start)
 
+        # Keep a stable variable namespace (0..k-1) for samplers that cache/fix
+        # embeddings between calls (for example LazyFixedEmbeddingComposite).
+        # Using global parameter indices here makes the variable labels drift
+        # across steps and can trigger MissingChainError.
+        selected_list = [int(index) for index in selected_indices.tolist()]
+        local_by_global = {global_index: local_index for local_index, global_index in enumerate(selected_list)}
+        bqm_local = bqm.relabel_variables(local_by_global, inplace=False)
+
         sample_start = perf_counter()
-        response = self.sample_bqm(bqm)
+        response = self.sample_bqm(bqm_local)
         sample_total_time_sec = float(perf_counter() - sample_start)
         backend_metadata = self._extract_backend_metadata(response)
         transfer_time_sec, sampling_time_sec = self._extract_sampling_breakdown(
@@ -350,10 +368,11 @@ class QuadraticAnnealingOptimizer:
             sample_total_time_sec=sample_total_time_sec,
         )
 
+        self._sync_if_cuda()
         update_start = perf_counter()
         delta = torch.zeros_like(current_params)
-        for parameter_index in selected_indices.tolist():
-            bit_value = response.first.sample[int(parameter_index)]
+        for local_index, parameter_index in enumerate(selected_list):
+            bit_value = response.first.sample[int(local_index)]
             delta_value = current_params.new_tensor(self.step_size if bit_value else -self.step_size)
             beta = self.defaults.get("beta", None)
             if beta is not None:
@@ -379,6 +398,7 @@ class QuadraticAnnealingOptimizer:
             if accepted and self.defaults.get("beta", None) is not None:
                 self.momentum[selected_indices] = delta[selected_indices]
 
+        self._sync_if_cuda()
         update_time_sec = float(perf_counter() - update_start)
 
         result: dict[str, float | bool | int | str | None] = {
@@ -392,6 +412,12 @@ class QuadraticAnnealingOptimizer:
             "sampling_time_sec": sampling_time_sec,
             "sample_total_time_sec": sample_total_time_sec,
             "update_time_sec": update_time_sec,
+            "optimization_time_sec": (
+                quadratic_model_time_sec
+                + build_bqm_time_sec
+                + sample_total_time_sec
+                + update_time_sec
+            ),
         }
         result.update(backend_metadata)
         return result
