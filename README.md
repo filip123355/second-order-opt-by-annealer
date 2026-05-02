@@ -182,7 +182,7 @@ python scripts/run_block_size_comparison.py \
 Use this script to profile QA step-time components and identify bottlenecks before publication.
 It breaks the QA step into:
 
-- `build_bqm_time_sec`
+- `problem_construction_time_sec`
 - `transfer_time_sec`
 - `sampling_time_sec`
 - `update_time_sec`

@@ -21,7 +21,7 @@ from src.utils import data_load_and_prep, set_global_seed
 
 
 _COMPONENTS = [
-    "build_bqm_time_sec",
+    "problem_construction_time_sec",
     "transfer_time_sec",
     "sampling_time_sec",
     "update_time_sec",
@@ -83,7 +83,7 @@ def _plot_sampler_breakdown(
     fig, ax = plt.subplots(figsize=(10, 6))
 
     width = 0.65
-    ax.bar(x_values, build_share, width=width, label="build_bqm")
+    ax.bar(x_values, build_share, width=width, label="problem_construction")
     ax.bar(x_values, transfer_share, width=width, bottom=build_share, label="transfer")
 
     build_plus_transfer = [b + t for b, t in zip(build_share, transfer_share)]
@@ -210,12 +210,12 @@ def main() -> None:
                         "seed": int(seed),
                         "run_id": summary.get("run_id"),
                         "epochs": int(args.epochs),
-                        "build_bqm_time_sec_mean": component_means["build_bqm_time_sec"],
+                        "problem_construction_time_sec_mean": component_means["problem_construction_time_sec"],
                         "transfer_time_sec_mean": component_means["transfer_time_sec"],
                         "sampling_time_sec_mean": component_means["sampling_time_sec"],
                         "update_time_sec_mean": component_means["update_time_sec"],
                         "step_time_components_sum_sec_mean": total_time_mean,
-                        "build_bqm_share_pct": _to_percent(component_means["build_bqm_time_sec"], total_time_mean),
+                        "problem_construction_share_pct": _to_percent(component_means["problem_construction_time_sec"], total_time_mean),
                         "transfer_share_pct": _to_percent(component_means["transfer_time_sec"], total_time_mean),
                         "sampling_share_pct": _to_percent(component_means["sampling_time_sec"], total_time_mean),
                         "update_share_pct": _to_percent(component_means["update_time_sec"], total_time_mean),
@@ -233,7 +233,7 @@ def main() -> None:
         def _metric(name: str) -> list[float]:
             return [float(row[name]) for row in rows]
 
-        build_share = _metric("build_bqm_share_pct")
+        build_share = _metric("problem_construction_share_pct")
         transfer_share = _metric("transfer_share_pct")
         sampling_share = _metric("sampling_share_pct")
         update_share = _metric("update_share_pct")
@@ -243,13 +243,13 @@ def main() -> None:
                 "qa_sampler_mode": qa_mode,
                 "subset_size": subset_size,
                 "num_runs": len(rows),
-                "build_bqm_time_sec_mean": float(mean(_metric("build_bqm_time_sec_mean"))),
+                "problem_construction_time_sec_mean": float(mean(_metric("problem_construction_time_sec_mean"))),
                 "transfer_time_sec_mean": float(mean(_metric("transfer_time_sec_mean"))),
                 "sampling_time_sec_mean": float(mean(_metric("sampling_time_sec_mean"))),
                 "update_time_sec_mean": float(mean(_metric("update_time_sec_mean"))),
                 "step_time_components_sum_sec_mean": float(mean(_metric("step_time_components_sum_sec_mean"))),
-                "build_bqm_share_pct_mean": float(mean(build_share)),
-                "build_bqm_share_pct_std": float(stdev(build_share)) if len(build_share) > 1 else 0.0,
+                "problem_construction_share_pct_mean": float(mean(build_share)),
+                "problem_construction_share_pct_std": float(stdev(build_share)) if len(build_share) > 1 else 0.0,
                 "transfer_share_pct_mean": float(mean(transfer_share)),
                 "transfer_share_pct_std": float(stdev(transfer_share)) if len(transfer_share) > 1 else 0.0,
                 "sampling_share_pct_mean": float(mean(sampling_share)),

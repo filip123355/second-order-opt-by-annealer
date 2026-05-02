@@ -50,5 +50,6 @@ Thumbs.db
 # Wheel / packaging metadata
 *.whl
 MANIFEST
+.codex
 
 

@@ -7,6 +7,8 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
 from .losses import RidgeLoss, SVMSquaredHingeLoss
 from veloxq_sdk import VeloxQSolver
+
+
 class QuadraticAnnealingOptimizer:
     """An optimizer that uses a quadratic approximation of the loss landscape to construct a binary quadratic model, 
     which is then optimized using a quantum annealer or a classical sampler. The optimizer selects a subset of parameters 
@@ -56,6 +58,26 @@ class QuadraticAnnealingOptimizer:
         info = response.info if isinstance(response.info, dict) else {}
         timing = info.get("timing", {}) if isinstance(info.get("timing", {}), dict) else {}
         embedding_context = info.get("embedding_context", {}) if isinstance(info.get("embedding_context", {}), dict) else {}
+
+        def _first_time_seconds(*keys: str) -> float | None:
+            for key in keys:
+                value = None
+                scale = 1.0
+                if key in info:
+                    value = info.get(key)
+                elif key in timing:
+                    value = timing.get(key)
+
+                if key.endswith("_us"):
+                    scale = 1e-6
+
+                if value is None:
+                    continue
+                try:
+                    return float(value) * scale
+                except (TypeError, ValueError):
+                    continue
+            return None
 
         def _first_float(*keys: str) -> float | None:
             for key in keys:
@@ -136,14 +158,14 @@ class QuadraticAnnealingOptimizer:
         return {
             "sampler_name": type(self.sampler).__name__,
             "solver_id": str(info.get("problem_id") or info.get("solver") or info.get("solver_id") or ""),
-            "qpu_access_time": _first_float("qpu_access_time", "qpu_access_time_us"),
-            "qpu_sampling_time": _first_float("qpu_sampling_time", "qpu_sampling_time_us"),
-            "qpu_readout_time": _first_float("qpu_readout_time", "qpu_readout_time_us"),
-            "qpu_anneal_time_per_sample": _first_float(
+            "qpu_access_time": _first_time_seconds("qpu_access_time", "qpu_access_time_us"),
+            "qpu_sampling_time": _first_time_seconds("qpu_sampling_time", "qpu_sampling_time_us"),
+            "qpu_readout_time": _first_time_seconds("qpu_readout_time", "qpu_readout_time_us"),
+            "qpu_anneal_time_per_sample": _first_time_seconds(
                 "qpu_anneal_time_per_sample",
                 "qpu_anneal_time_per_sample_us",
             ),
-            "qpu_delay_time_per_sample": _first_float(# TODO: Now names are guesses. needs to be addressed.
+            "qpu_delay_time_per_sample": _first_time_seconds(# TODO: Now names are guesses. needs to be addressed.
                 "qpu_delay_time_per_sample",
                 "qpu_delay_time_per_sample_us",
             ),
@@ -158,47 +180,16 @@ class QuadraticAnnealingOptimizer:
 
     def _extract_sampling_breakdown(
         self,
-        response: dimod.SampleSet,
+        backend_metadata: dict[str, float | str | None],
         sample_total_time_sec: float,
     ) -> tuple[float, float]:
         """Return (transfer_time_sec, sampling_time_sec) for one sampler call."""
-        info = response.info if isinstance(response.info, dict) else {}
 
-        def _as_float(value: object) -> float | None:
-            try:
-                if value is None:
-                    return None
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-
-        transfer_time = _as_float(info.get("transfer_time_sec"))
-        backend_sampling_time = _as_float(info.get("backend_sampling_time_sec"))
-        if transfer_time is not None and backend_sampling_time is not None:
-            return max(0.0, transfer_time), max(0.0, backend_sampling_time)
-
-        # D-Wave exposes QPU timing mostly in microseconds. Convert if available and
-        # estimate communication/overhead as sample_total - qpu_access.
-        qpu_access = _as_float(info.get("qpu_access_time"))
-        if qpu_access is None and isinstance(info.get("timing"), dict):
-            qpu_access = _as_float(info["timing"].get("qpu_access_time"))
-
-        qpu_access_us = _as_float(info.get("qpu_access_time_us"))
-        if qpu_access_us is None and isinstance(info.get("timing"), dict):
-            qpu_access_us = _as_float(info["timing"].get("qpu_access_time_us"))
-
-        if qpu_access is not None:
-            sampling_time_sec = max(0.0, qpu_access * 1e-6)
-            transfer_time_sec = max(0.0, sample_total_time_sec - sampling_time_sec)
-            return transfer_time_sec, sampling_time_sec
-
-        if qpu_access_us is not None:
-            sampling_time_sec = max(0.0, qpu_access_us * 1e-6)
-            transfer_time_sec = max(0.0, sample_total_time_sec - sampling_time_sec)
-            return transfer_time_sec, sampling_time_sec
-
-        # Fallback for local/classical samplers where transfer is effectively zero.
-        return 0.0, max(0.0, sample_total_time_sec)
+        if self.sampler.__class__.__name__ == "dwave":
+            sampling_time_sec = backend_metadata.get("qpu_access_time")
+            transfer_time_sec = sample_total_time_sec - sampling_time_sec
+            return (transfer_time_sec, sampling_time_sec)
+        return (0.0, sample_total_time_sec)
 
     def _selected_indices(self, grad_vec: torch.Tensor) -> torch.Tensor:
 
@@ -278,6 +269,7 @@ class QuadraticAnnealingOptimizer:
         """ 
         Function to build a binary quadratic model from the selected gradient and Hessian blocks. 
         """
+
         step_sq = self.step_size ** 2
         linear = {}
         quadratic = {}
@@ -293,7 +285,7 @@ class QuadraticAnnealingOptimizer:
         for left in range(selected_indices.numel()):
             for right in range(left + 1, selected_indices.numel()):
                 coupling = float(hessian_block[left, right].item())
-                if abs(coupling) < 1e-12:
+                if abs(coupling) < 1e-12: # important!
                     continue
 
                 left_index = int(selected_indices[left].item())
@@ -309,7 +301,7 @@ class QuadraticAnnealingOptimizer:
                    bqm: BinaryQuadraticModel,
     ) -> dimod.SampleSet:
         """ 
-        Sampling from BQM according to chosen sampler.
+        Sampling from BQM according to the chosen sampler.
         """
         if isinstance(self.sampler, ExactSolver):
             return self.sampler.sample(bqm)
@@ -338,23 +330,19 @@ class QuadraticAnnealingOptimizer:
             self.momentum = torch.zeros_like(current_params)
 
         self._sync_if_cuda()
-        model_start = perf_counter()
+        construction_start = perf_counter()
         _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
         self._sync_if_cuda()
-        quadratic_model_time_sec = float(perf_counter() - model_start)
 
         selected_indices_cpu = selected_indices.detach().cpu()
         grad_block_cpu = grad_block.detach().cpu()
         hessian_block_cpu = hessian_block.detach().cpu()
 
-        build_bqm_start = perf_counter()
         bqm = self.build_bqm(selected_indices_cpu, grad_block_cpu, hessian_block_cpu)
-        build_bqm_time_sec = float(perf_counter() - build_bqm_start)
+        self._sync_if_cuda()
+        problem_construction_time_sec = float(perf_counter() - construction_start)
 
         # Keep a stable variable namespace (0..k-1) for samplers that cache/fix
-        # embeddings between calls (for example LazyFixedEmbeddingComposite).
-        # Using global parameter indices here makes the variable labels drift
-        # across steps and can trigger MissingChainError.
         selected_list = [int(index) for index in selected_indices.tolist()]
         local_by_global = {global_index: local_index for local_index, global_index in enumerate(selected_list)}
         bqm_local = bqm.relabel_variables(local_by_global, inplace=False)
@@ -364,7 +352,7 @@ class QuadraticAnnealingOptimizer:
         sample_total_time_sec = float(perf_counter() - sample_start)
         backend_metadata = self._extract_backend_metadata(response)
         transfer_time_sec, sampling_time_sec = self._extract_sampling_breakdown(
-            response=response,
+            backend_metadata=backend_metadata,
             sample_total_time_sec=sample_total_time_sec,
         )
 
@@ -406,16 +394,14 @@ class QuadraticAnnealingOptimizer:
             "quadratic_energy": float(response.first.energy),
             "accepted": accepted,
             "selected_variables": int(selected_indices.numel()),
-            "quadratic_model_time_sec": quadratic_model_time_sec,
-            "build_bqm_time_sec": build_bqm_time_sec,
+            "problem_construction_time_sec": problem_construction_time_sec,
             "transfer_time_sec": transfer_time_sec,
             "sampling_time_sec": sampling_time_sec,
             "sample_total_time_sec": sample_total_time_sec,
             "update_time_sec": update_time_sec,
             "optimization_time_sec": (
-                quadratic_model_time_sec
-                + build_bqm_time_sec
-                + sample_total_time_sec
+                problem_construction_time_sec
+                + sampling_time_sec
                 + update_time_sec
             ),
         }

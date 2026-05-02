@@ -12,7 +12,6 @@ from dimod import ExactSolver
 from src.quadratic_annealing_optimizer import QuadraticAnnealingOptimizer
 from src.utils import data_load_and_prep
 
-
 class SmokeTests(unittest.TestCase):
     def test_diabetes_split_without_stratify(self):
         captured = {}

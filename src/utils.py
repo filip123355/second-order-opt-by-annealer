@@ -29,8 +29,6 @@ def set_global_seed(seed: int) -> None:
 def build_sampler(mode: str = "simulated",
 ) -> Any:
     normalized_mode = mode.lower() 
-
-    # TODO: Discuss adding the controlls with Paweł
     
     if normalized_mode == "dwave":
         load_dotenv()
@@ -39,8 +37,7 @@ def build_sampler(mode: str = "simulated",
             endpoint = os.environ.get("DWAVE_API_ENDPOINT")
             return LazyFixedEmbeddingComposite(DWaveSampler(token=token, endpoint=endpoint)) # Resuing the same embedding across all runs
         except Exception as exc:
-            print(f"Falling back to simulated annealing because the QPU is unavailable: {exc}")
-            return SimulatedAnnealingSampler()
+            raise RuntimeError(f"Failed to initialize D-Wave sampler. Please check your API token and endpoint: {exc}")
         
     elif normalized_mode == "hybrid":
         # try:
