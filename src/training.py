@@ -31,12 +31,9 @@ def train(
     seed: int | None = None,
     collect_epoch_history: bool = False,
     zero_acceptance_patience: int = 6,
-    warm_start_epochs: int = 1,
 ) -> dict[str, object]:
     if seed is not None:
         set_global_seed(seed)
-
-    warm_start_epochs = max(0, int(warm_start_epochs))
 
     device = torch.device(c_device)
     model.to(device)
@@ -72,7 +69,6 @@ def train(
                 "device": str(device),
                 "experiment_name": experiment_name,
                 "tracking_uri": requested_tracking_uri,
-                "warm_start_epochs": warm_start_epochs,
             }
         )
         if seed is not None:
@@ -93,7 +89,6 @@ def train(
 
         start_time = perf_counter()
         global_step = 0
-        raw_total_optimization_time_sec = 0.0
         total_optimization_time_sec = 0.0
         total_train_eval_time_sec = 0.0
         total_test_eval_time_sec = 0.0
@@ -106,7 +101,6 @@ def train(
 
         for epoch in range(epochs):
             epoch_start = perf_counter()
-            log_this_epoch = epoch >= warm_start_epochs
             model.train()
             batch_energies = []
             accepted_steps = 0
@@ -141,10 +135,8 @@ def train(
                 if isinstance(optimizer, QuadraticAnnealingOptimizer):
                     step_info = optimizer.step(features, targets, loss_fn)
                     _sync_if_cuda()
-                    step_wall_time_sec = float(perf_counter() - step_start)
                     batch_energies.append(step_info["quadratic_energy"])
                     accepted_steps += int(step_info["accepted"])
-                    step_optimization_time_sec = float(step_info.get("optimization_time_sec", step_wall_time_sec))
 
                     if not sampler_name_logged and step_info.get("sampler_name"):
                         mlflow.log_param("sampler_name", str(step_info["sampler_name"]))
@@ -183,17 +175,13 @@ def train(
                             return loss
                         optimizer.step(closure)
                     _sync_if_cuda()
-                    step_wall_time_sec = float(perf_counter() - step_start)
-                    step_optimization_time_sec = step_wall_time_sec
+                step_optimization_time_sec = float(perf_counter() - step_start)
                 epoch_optimizer_time_values.append(step_optimization_time_sec)
 
-                if log_batch_metrics and log_this_epoch:
+                if log_batch_metrics:
                     log = {
                         "optimization_time_sec": step_optimization_time_sec,
                     }
-
-                    if isinstance(optimizer, QuadraticAnnealingOptimizer):
-                        log["optimization_wall_time_sec"] = step_wall_time_sec
 
                     if isinstance(optimizer, QuadraticAnnealingOptimizer):
                         log["batch_loss"] = float(step_info["loss"])
@@ -241,42 +229,39 @@ def train(
                 }
 
             optimization_time_sec = float(sum(epoch_optimizer_time_values))
-            raw_total_optimization_time_sec += optimization_time_sec
+            total_optimization_time_sec += optimization_time_sec
             total_train_eval_time_sec += train_eval_time_sec
             total_test_eval_time_sec += test_eval_time_sec
             epoch_evaluation_time_sec = float(train_eval_time_sec + test_eval_time_sec)
-            epoch_mlflow_logging_time_sec = 0.0
-            if log_this_epoch:
-                total_optimization_time_sec += optimization_time_sec
-                log["optimization_time_sec"] = optimization_time_sec
-                log["epoch_train_evaluation_time_sec"] = train_eval_time_sec
-                log["epoch_test_evaluation_time_sec"] = test_eval_time_sec
-                log["epoch_evaluation_time_sec"] = epoch_evaluation_time_sec
+            log["optimization_time_sec"] = optimization_time_sec
+            log["epoch_train_evaluation_time_sec"] = train_eval_time_sec
+            log["epoch_test_evaluation_time_sec"] = test_eval_time_sec
+            log["epoch_evaluation_time_sec"] = epoch_evaluation_time_sec
 
-                if isinstance(optimizer, QuadraticAnnealingOptimizer):
-                    acceptance_rate = accepted_steps / len(train_loader)
-                    if acceptance_rate == 0.0:
-                        zero_acceptance_streak += 1
-                    else:
-                        zero_acceptance_streak = 0
+            if isinstance(optimizer, QuadraticAnnealingOptimizer):
+                acceptance_rate = accepted_steps / len(train_loader)
+                if acceptance_rate == 0.0:
+                    zero_acceptance_streak += 1
+                else:
+                    zero_acceptance_streak = 0
 
-                    log["train_quadratic_energy"] = float(sum(batch_energies) / len(batch_energies))
-                    log["acceptance_rate"] = float(acceptance_rate)
-                    log["zero_acceptance_streak"] = float(zero_acceptance_streak)
+                log["train_quadratic_energy"] = float(sum(batch_energies) / len(batch_energies))
+                log["acceptance_rate"] = float(acceptance_rate)
+                log["zero_acceptance_streak"] = float(zero_acceptance_streak)
 
-                    for metric_name, values in backend_metric_values.items():
-                        if values:
-                            log[f"train_{metric_name}"] = float(sum(values) / len(values))
+                for metric_name, values in backend_metric_values.items():
+                    if values:
+                        log[f"train_{metric_name}"] = float(sum(values) / len(values))
 
-                mlflow_logging_start = perf_counter()
-                mlflow.log_metrics(
-                    log,
-                    step=epoch,
-                )
-                epoch_mlflow_logging_time_sec = float(perf_counter() - mlflow_logging_start)
+            mlflow_logging_start = perf_counter()
+            mlflow.log_metrics(
+                log,
+                step=epoch,
+            )
+            epoch_mlflow_logging_time_sec = float(perf_counter() - mlflow_logging_start)
             epoch_total_time_sec = float(perf_counter() - epoch_start)
 
-            if collect_epoch_history and log_this_epoch:
+            if collect_epoch_history:
                 elapsed_time_sec = float(perf_counter() - start_time)
                 epoch_entry: dict[str, float | int] = {
                     "epoch": int(epoch),
@@ -338,7 +323,6 @@ def train(
         _sync_if_cuda()
         training_time = perf_counter() - start_time
         mlflow.log_metric("optimization_time_sec", float(total_optimization_time_sec))
-        mlflow.log_metric("raw_optimization_time_sec", float(raw_total_optimization_time_sec))
         mlflow.log_metric("sum_epoch_optimization_time_sec", float(sum_optimization_time_sec))
         mlflow.log_metric("train_evaluation_time_sec", float(total_train_eval_time_sec))
         mlflow.log_metric("test_evaluation_time_sec", float(total_test_eval_time_sec))
@@ -351,9 +335,7 @@ def train(
             "experiment_id": str(active_run.info.experiment_id),
             "experiment_name": experiment_name,
             "tracking_uri": requested_tracking_uri,
-            "warm_start_epochs": int(warm_start_epochs),
             "optimization_time_sec": float(total_optimization_time_sec),
-            "raw_optimization_time_sec": float(raw_total_optimization_time_sec),
             "sum_epoch_optimization_time_sec": float(sum_optimization_time_sec),
             "train_evaluation_time_sec": float(total_train_eval_time_sec),
             "test_evaluation_time_sec": float(total_test_eval_time_sec),

@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 import dimod
 from time import perf_counter
+from torch.func import grad, hessian, jacrev, functional_call
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from dimod import BinaryQuadraticModel, ExactSolver
@@ -226,39 +227,54 @@ class QuadraticAnnealingOptimizer:
                 raise ValueError("selection must be a float in (0, 1)")
 
     def quadratic_model(self, 
-                        loss: torch.Tensor,
-    ) -> list[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                        loss_fn: callable, 
+                        inputs: torch.Tensor, 
+                        targets: torch.Tensor,
+                        ) -> tuple:
         """
-        Function to compute the quadratic approximation of the loss landscape in the neighborhood of the current parameters.
+        Zoptymalizowane obliczanie bloku Hessianu względem parametrów modelu.
+        Liczy pochodne TYLKO dla wybranych (Top-K) indeksów.
         """
+        
+        params_dict = dict(self.model.named_parameters())
+        trainable_params_names = [k for k, v in params_dict.items() if v.requires_grad]
+        trainable_params_dict = {k: params_dict[k] for k in trainable_params_names}
 
-        params = [param for param in self.model.parameters() if param.requires_grad]
-        grads = torch.autograd.grad(loss, params, create_graph=True)
-        grad_vec = parameters_to_vector(grads)
+        def compute_loss(p_dict):
+            logits = functional_call(self.model, p_dict, (inputs,))
+            if isinstance(loss_fn, (RidgeLoss, SVMSquaredHingeLoss)):
+                return loss_fn(logits, targets, self.model)
+            return loss_fn(logits, targets)
+        
+        grad_func = grad(compute_loss)
+        grads_dict = grad_func(trainable_params_dict)
+
+        grad_vec = torch.cat([grads_dict[k].flatten() for k in trainable_params_names])
+        
         selected_indices = self._selected_indices(grad_vec)
         grad_block = grad_vec[selected_indices]
 
-        hessian_block = torch.zeros(
-            (selected_indices.numel(), selected_indices.numel()),
-            device=self.device,
-        )
+        def get_selected_grads(p_dict):
+            g_dict = grad(compute_loss)(p_dict)
+            g_vec = torch.cat([g_dict[k].flatten() for k in trainable_params_names])
+            return g_vec[selected_indices] 
         
-        for row_index, param_index in enumerate(selected_indices):
-            second_grads = torch.autograd.grad(
-                grad_vec[param_index],
-                params,
-                retain_graph=row_index + 1 < selected_indices.numel(),
-            )
-            second_vec = parameters_to_vector(second_grads)
-            hessian_block[row_index] = second_vec[selected_indices]
+        jacobian_dict = jacrev(get_selected_grads)(trainable_params_dict)
 
-        hessian_block = 0.5 * (hessian_block + hessian_block.T) # Hermitization
+        hessian_rows = torch.cat([
+            jacobian_dict[k].flatten(start_dim=1) for k in trainable_params_names
+        ], dim=1)
 
-        return (grad_vec.detach(), 
-                selected_indices.detach(), 
-                grad_block.detach(), 
-                hessian_block.detach(),
-                )
+        hessian_block = hessian_rows[:, selected_indices]
+
+        hessian_block = 0.5 * (hessian_block + hessian_block.T)
+
+        return (
+            grad_vec.detach(), 
+            selected_indices.detach(), 
+            grad_block.detach(), 
+            hessian_block.detach()
+        )
 
     def build_bqm(
         self,
@@ -319,10 +335,6 @@ class QuadraticAnnealingOptimizer:
         Single optimization step.
         """
         self.model.zero_grad(set_to_none=True)
-        logits = self.model(features)
-        loss = loss_fn(logits, targets, self.model) if (
-            isinstance(loss_fn, RidgeLoss) or isinstance(
-                loss_fn, SVMSquaredHingeLoss)) else loss_fn(logits, targets)
 
         params = [param for param in self.model.parameters() if param.requires_grad]
         current_params = parameters_to_vector(params).detach().clone()
@@ -331,7 +343,7 @@ class QuadraticAnnealingOptimizer:
 
         self._sync_if_cuda()
         construction_start = perf_counter()
-        _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss)
+        _, selected_indices, grad_block, hessian_block = self.quadratic_model(loss_fn, features, targets)
         self._sync_if_cuda()
 
         selected_indices_cpu = selected_indices.detach().cpu()
@@ -371,14 +383,18 @@ class QuadraticAnnealingOptimizer:
             candidate_params = current_params + delta.to(current_params.device)
             vector_to_parameters(candidate_params, params)
 
-            candidate_loss = (float(loss_fn(self.model(features), targets, self.model).item()) 
-                              if (isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss))
-                              else float(loss_fn(self.model(features), targets).item()))
+            loss_ = (
+                loss_fn(self.model(features), targets, self.model) 
+                if (isinstance(loss_fn, RidgeLoss) or isinstance(loss_fn, SVMSquaredHingeLoss)) 
+                else loss_fn(self.model(features), targets)
+            )
 
-            if candidate_loss > float(loss.item()):
+            candidate_loss = (float(loss_.item())) 
+
+            if candidate_loss > float(loss_.item()):
                 vector_to_parameters(current_params, params)
                 accepted = False
-                effective_loss = float(loss.item())
+                effective_loss = float(loss_).item()
             else:
                 accepted = True
                 effective_loss = candidate_loss
